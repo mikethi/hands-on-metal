@@ -435,6 +435,14 @@ def update_fill_rates(db: sqlite3.Connection, run_id: int) -> None:
 
     total_fields = len(FIELD_CHECKS) + 1  # +1 for hal_interface
 
+    # Pre-validate all table/column names against a strict whitelist so that
+    # FIELD_CHECKS entries can never be used for SQL injection, even if the
+    # constant is accidentally modified in future.
+    _VALID_IDENT = re.compile(r'^[a-z_][a-z0-9_]*$')
+    for table, col, _ in FIELD_CHECKS:
+        if not _VALID_IDENT.match(table) or not _VALID_IDENT.match(col):
+            raise ValueError(f"Unexpected table/column identifier: {table!r}.{col!r}")
+
     for hw_id in hw_ids:
         filled = 0
 
@@ -446,12 +454,12 @@ def update_fill_rates(db: sqlite3.Connection, run_id: int) -> None:
         if row and row[0]:
             filled += 1
 
-        # Check related-table presence
+        # Check related-table presence (identifiers validated above)
         for table, col, _ in FIELD_CHECKS:
-            # Only query tables that have an hw_id column
             try:
                 cur.execute(
-                    f"SELECT 1 FROM {table} WHERE {col}=? LIMIT 1", (hw_id,)
+                    f"SELECT 1 FROM {table} WHERE {col}=? LIMIT 1",  # noqa: S608
+                    (hw_id,),
                 )
                 if cur.fetchone():
                     filled += 1

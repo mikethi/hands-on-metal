@@ -229,7 +229,7 @@ mount_and_extract() {
         local decrypted=0
 
         # Try TWRP/OrangeFox native decrypt first
-        if attempt_recovery_decrypt "${HOM_PASSWORD:-default_android}"; then
+        if attempt_recovery_decrypt "${HOM_PASSWORD:-}"; then
             # After native decrypt, dm-crypt mapping appears under /dev/block/dm-*
             local dm_dev
             dm_dev=$(find_part "${part_name}" 2>/dev/null || true)

@@ -556,7 +556,7 @@ def parse_fstab(text: str, source: str, run_id: int,
                 ok, ov = opt, "1"
             ok = ok.strip()
             ov = ov.strip()
-            if ok in ("encryptable", "fileencryption", "keydirectory",
+            if ok in ("encryptable", "forceencrypt", "fileencryption", "keydirectory",
                       "avb", "logical_block_size", "physical_block_size",
                       "metadata_encryption", "wrappedkey"):
                 try:
