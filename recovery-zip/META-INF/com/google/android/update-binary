@@ -257,11 +257,12 @@ mount_and_extract() {
         fi
 
         if [ "$decrypted" -eq 0 ]; then
-            log "  warn: FDE decryption not possible; collecting raw metadata only"
-            ui_print "  ! Could not decrypt $part_name — pass HOM_PASSWORD or HOM_KEY"
+            log "  warn: FDE decryption failed; falling back to raw read-only mount (extraction may be limited/ciphertext)"
+            ui_print "  ! Could not decrypt $part_name — trying raw read-only mount (data may be limited/ciphertext)"
             # Record the fact for the pipeline
             echo "fde_undecrypted.$part_name=1" >> "$OUT/enc_info.txt"
-            return 0
+            # Best-effort fallback: collect whatever is visible without decryption.
+            mount_dev="$dev"
         fi
     fi
 
