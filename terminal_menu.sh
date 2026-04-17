@@ -6,6 +6,9 @@ set -eu
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── dependency check (runs once per session) ──────────────────
+source "$REPO_ROOT/check_deps.sh" || exit 1
+
 build_script_index() {
     SCRIPT_LABELS=()
     SCRIPT_PATHS=()
