@@ -2,7 +2,7 @@
 # terminal_menu.sh
 # Interactive terminal launcher for all project scripts.
 
-set -u
+set -eu
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -55,6 +55,7 @@ run_selected() {
 
     echo
     echo "Selected: $rel"
+    echo "Note: enter space-separated arguments (embedded-space quoting is not supported)."
     read -r -a args_array -p "Arguments (optional): "
 
     echo
