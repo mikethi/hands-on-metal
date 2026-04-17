@@ -1,9 +1,60 @@
-# hands-on-metal **********warning********* experimental 
+# hands-on-metal
 
-A guided, fully offline root workflow for Android devices.  
+> ⚠️ **Experimental** — This project is under active development. Use at your
+> own risk and always have a backup of your device before flashing anything.
+
+A guided, fully offline root workflow for Android devices.
 Collects real hardware data, patches the boot image via Magisk, and uploads
 a privacy-safe diagnostic bundle — all without leaving the device or a single
 trusted PC.
+
+---
+
+## What It Can Do
+
+- **Root any supported Android device** (API 21–35+) via Magisk — either through the Magisk app or from TWRP / OrangeFox recovery, with no computer required.
+- **Auto-detect your device** — identifies A/B slots, System-as-Root, dynamic partitions, Treble, AVB version, and the correct boot partition (`init_boot`, `boot`, or `vendor_boot`).
+- **Prevent bricks** — reads the anti-rollback index and security patch level before patching so you never flash a downgrade that fuses the bootloader.
+- **Collect real hardware data** — mirrors regulators, display adapters, device-tree, pinctrl, VINTF manifests, and HAL symbols in read-only mode.
+- **Analyse and report** — a host-side Python pipeline parses logs, builds a SQLite hardware database, runs failure analysis, and generates human-readable reports.
+- **Protect your privacy** — all PII is stripped before any data leaves the device; uploads are explicit opt-in only.
+- **Work fully offline** — a single bundle ZIP contains the complete repo, all binaries, and both flashable ZIPs so you can work without any network access.
+- **Resume after reboots** — the state machine persists progress across reboots and re-runs automatically on the next boot.
+- **Auto-detect OTA updates** — if the Android version, security patch, or A/B slot changes between boots, the workflow re-runs against the new system image automatically.
+- **Run everything from one menu** — an interactive terminal launcher (`terminal_menu.sh`) lists every script and lets you run any of them with arguments.
+
+---
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      hands-on-metal workflow                    │
+│                                                                 │
+│  1. ENV DETECT    Probe shell, Python, Termux, tools, SELinux   │
+│  2. PROFILE       Read device props, partitions, AVB, Treble    │
+│  3. ACQUIRE       Copy the boot/init_boot image (read-only)     │
+│  4. PATCH         Magisk-patch the image with device flags       │
+│  5. FLASH         Write patched image; verify SHA-256            │
+│  6. VERIFY        Confirm Magisk root; install module            │
+│                                                                 │
+│  On reboot → service.sh re-checks OTA/slot changes, then       │
+│  runs env_detect → setup_termux → collect (hardware data).      │
+│                                                                 │
+│  Host-side pipeline (Python, stdlib only):                      │
+│    parse_logs → failure_analysis → build_table → report         │
+│    → optional upload with privacy redaction                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+There are **two install paths**:
+
+| Path | When to use | How |
+|------|-------------|-----|
+| **Mode A — Magisk module** | Magisk is already installed | Flash the module ZIP via the Magisk app |
+| **Mode B — Recovery ZIP** | No Magisk yet; you have TWRP or OrangeFox | Flash the recovery ZIP from recovery |
+
+Both paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) for a full decision tree.
 
 ---
 
@@ -15,6 +66,7 @@ trusted PC.
 | **Auto device profiling** | Detects A/B slots, System-as-Root, dynamic partitions, Treble, AVB version, init\_boot vs boot vs vendor\_boot |
 | **Anti-rollback protection** | Reads the device's anti-rollback index before patching so you never flash a downgrade that bricks the bootloader |
 | **Dual install paths** | Flash via the **Magisk app** (Mode A) *or* via **TWRP / OrangeFox** without Magisk pre-installed (Mode B) |
+| **OTA auto-detection** | Detects Android version, security patch, or A/B slot changes between boots and automatically re-runs the workflow |
 | **Termux bootstrap** | Auto-installs Termux + Python + required packages when no system Python is found; works with any Termux version and setup |
 | **Live hardware collection** | Mirrors `/sys/class/regulator`, `/sys/class/display`, `/proc/device-tree`, pinctrl, VINTF manifests, HAL symbols, and more — read-only, never mounts RW |
 | **Sandbox / CI / Termux detection** | Detects non-device environments and logs the same clear warning + conclusion in every context; records `HOM_HW_ENV` for downstream tools |
@@ -23,6 +75,7 @@ trusted PC.
 | **Privacy-safe sharing** | All PII stripped by `core/privacy.sh` before any data leaves the device; explicit opt-in for every upload |
 | **Offline ZIP builder** | `build/build_offline_zip.sh` produces self-contained flashable ZIPs for both install paths |
 | **Full dependency fetcher** | `build/fetch_all_deps.sh` uses `git` + `curl` to pull the repo and every binary, then creates a single offline bundle ZIP |
+| **Interactive terminal menu** | `terminal_menu.sh` lists all project scripts and lets you run any of them with arguments from a single launcher |
 | **Halium / libhybris shim** | C shim and Makefile for building a compatible userspace bridge from decompiled linker-map data |
 
 ---
@@ -70,6 +123,8 @@ trusted PC.
 | [`build/`](build/) | `build_offline_zip.sh`, `fetch_all_deps.sh`, `partition_index.json` |
 | [`tools/`](tools/) | Optional binaries (`busybox-arm64`, `magisk64`, `magisk32`, `magiskinit64`) — not committed; fetched by `fetch_all_deps.sh` |
 | [`halium-shim/`](halium-shim/) | C shim + Makefile for Halium/libhybris bridge research |
+| [`tests/`](tests/) | Python unit tests for `parse_logs` and `build_table` |
+| [`terminal_menu.sh`](terminal_menu.sh) | Interactive terminal launcher — run any project script from one menu |
 | [`docs/`](docs/) | Full documentation (see below) |
 
 ---
@@ -106,54 +161,94 @@ bash build/fetch_all_deps.sh
 3. Build both flashable ZIPs (`dist/hands-on-metal-magisk-module-<ver>.zip` and `dist/hands-on-metal-recovery-<ver>.zip`)
 4. Create `dist/hands-on-metal-full-bundle-<ver>.zip` — a single ZIP containing the complete repo snapshot, all tools, both flashable ZIPs, and SHA-256 checksums
 
-### 2 — Flash to your device
+### 2 — Build the flashable ZIPs only (no binary downloads)
+
+If you already have the binaries in `tools/` or want device-side binaries:
+
+```bash
+bash build/build_offline_zip.sh
+```
+
+To build without bundled tools (rely on what's already on the device):
+
+```bash
+bash build/build_offline_zip.sh --no-tools
+```
+
+### 3 — Flash to your device
 
 **Mode A — Magisk already installed:**
+
 ```bash
+# Push the ZIP to the device
 adb push dist/hands-on-metal-magisk-module-v2.0.0.zip /sdcard/
+
+# Then on the device:
 # Magisk app → Modules → Install from storage → select the ZIP → reboot
 ```
 
 **Mode B — no Magisk yet (flash from TWRP / OrangeFox):**
+
 ```bash
+# Push the ZIP to the device
 adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
-# Boot TWRP/OrangeFox → Install → select the ZIP → reboot
+
+# Then on the device:
+# Boot into TWRP/OrangeFox → Install → select the ZIP → swipe to confirm → reboot
 ```
 
-### 3 — Run the host-side pipeline after collection
+### 4 — Run the host-side pipeline after collection
+
+After your device has booted and collected hardware data, pull the logs and
+run the pipeline on your PC:
 
 ```bash
+# Pull logs from device to your PC
+adb pull /sdcard/hands-on-metal/logs/ ./logs/
+adb pull /sdcard/hands-on-metal/live_dump/ ./live_dump/
+
+# Parse the master log (replace <RUN_ID> with the actual run ID from the log filename)
 python pipeline/parse_logs.py \
-    --log /sdcard/hands-on-metal/logs/master_<RUN_ID>.log \
+    --log ./logs/master_<RUN_ID>.log \
     --out /tmp/parsed.json
 
+# Run failure analysis
 python pipeline/failure_analysis.py \
     --parsed /tmp/parsed.json \
     --out /tmp/analysis.json
 
+# Build the hardware database
 python pipeline/build_table.py \
     --db hardware_map.sqlite \
-    --dump /sdcard/hands-on-metal/live_dump \
+    --dump ./live_dump \
     --mode A \
     --run-id <RUN_ID>
 
+# Generate a human-readable report
 python pipeline/report.py --db hardware_map.sqlite
 ```
 
-### Optional — Run scripts from an interactive terminal menu
+### 5 — Run the unit tests
 
-If you prefer a single launcher in terminal, use:
+```bash
+python -m pytest tests/
+```
+
+### 6 — Interactive terminal menu (optional)
+
+Launch a single interactive menu that lists every script in the project and
+lets you run any of them with arguments:
 
 ```bash
 bash terminal_menu.sh
 ```
 
-The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`, `recovery-zip/`)
-and all pipeline Python scripts (`pipeline/*.py`), then lets you run any of them
-with optional arguments.
+The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`,
+`recovery-zip/`) and all pipeline Python scripts (`pipeline/*.py`). Select a
+number, enter optional arguments, and the script runs immediately.
 
-Note: argument input is space-separated; embedded space quoting is not supported
-inside the menu prompt.
+> **Note:** argument input is space-separated; embedded space quoting is not
+> supported inside the menu prompt.
 
 ---
 
