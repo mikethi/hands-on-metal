@@ -167,6 +167,7 @@ bash build/fetch_all_deps.sh
 EOF
 chmod +x /tmp/hands-on-metal-setup.sh
 /tmp/hands-on-metal-setup.sh
+cd hands-on-metal               # enter the repo after setup
 ```
 
 `fetch_all_deps.sh` will:
