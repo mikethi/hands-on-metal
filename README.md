@@ -157,10 +157,16 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 ### 1 — Clone and fetch all dependencies
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-setup.sh
+#!/usr/bin/env bash
+set -e
 git clone https://github.com/mikethi/hands-on-metal.git
 cd hands-on-metal
 bash check_deps.sh              # verify host tools (optional — runs automatically)
 bash build/fetch_all_deps.sh
+EOF
+chmod +x /tmp/hands-on-metal-setup.sh
+/tmp/hands-on-metal-setup.sh
 ```
 
 `fetch_all_deps.sh` will:
