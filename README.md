@@ -1,4 +1,4 @@
-# hands-on-metal
+# hands-on-metal **********warning********* experimental 
 
 A guided, fully offline root workflow for Android devices.  
 Collects real hardware data, patches the boot image via Magisk, and uploads
