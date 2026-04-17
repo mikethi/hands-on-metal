@@ -83,12 +83,12 @@ chmod +x tools/busybox-arm64
 _TMP="${TMPDIR:-/tmp}"
 curl -L -o "$_TMP/magisk.apk" \
   https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
-unzip -j "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk64.so' -d "$_TMP/"
-cp "$_TMP/libmagisk64.so" tools/magisk64
+unzip -jo "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk.so' -d "$_TMP/"
+cp "$_TMP/libmagisk.so" tools/magisk64
 chmod +x tools/magisk64
 
-unzip -j "$_TMP/magisk.apk" 'lib/armeabi-v7a/libmagisk32.so' -d "$_TMP/"
-cp "$_TMP/libmagisk32.so" tools/magisk32
+unzip -jo "$_TMP/magisk.apk" 'lib/armeabi-v7a/libmagisk.so' -d "$_TMP/"
+cp "$_TMP/libmagisk.so" tools/magisk32
 chmod +x tools/magisk32
 ```
 

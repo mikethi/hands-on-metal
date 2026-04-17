@@ -28,6 +28,7 @@ as `KEY="VALUE"  # cat:<category>`.
 | `HOM_DEV_SDK_INT` | int | Current SDK integer |
 | `HOM_DEV_ANDROID_VER` | string | Android version string (e.g. `14`) |
 | `HOM_DEV_SPL` | YYYY-MM-DD | Security patch level |
+| `HOM_DEV_BUILD_ID` | string | Build ID (e.g. `AP4A.250405.002`) — used for factory image downloads |
 | `HOM_DEV_IS_AB` | bool | `true` if A/B (seamless) updates |
 | `HOM_DEV_SLOT_SUFFIX` | string | `_a` or `_b` or empty |
 | `HOM_DEV_CURRENT_SLOT` | string | Human-readable current slot |
@@ -53,7 +54,10 @@ as `KEY="VALUE"  # cat:<category>`.
 |----------|------|-------------|
 | `HOM_BOOT_IMG_PATH` | path | Local copy of unpatched boot image |
 | `HOM_BOOT_IMG_SHA256` | hex | SHA-256 of unpatched image |
-| `HOM_BOOT_PART_SRC` | path | Block device image was read from |
+| `HOM_BOOT_PART_SRC` | path | Block device or source the image was obtained from |
+| `HOM_BOOT_IMG_METHOD` | enum | How the image was acquired: `root_dd`, `pre_placed`, `factory_download`, `user_prompt` |
+| `HOM_BOOT_IMG_HAS_CURL` | bool | Whether curl is available for downloads |
+| `HOM_BOOT_IMG_HAS_UNZIP` | bool | Whether unzip is available for extraction |
 
 ### 1.3 Anti-rollback (`cat:avb`)
 

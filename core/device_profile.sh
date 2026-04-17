@@ -94,23 +94,27 @@ partition naming, and boot security configuration"
 
     # ── 2. Android version + security patch ──────────────────
 
-    local api_level spl release sdk_int
+    local api_level spl release sdk_int build_id
     api_level=$(_prop ro.product.first_api_level)
     sdk_int=$(_prop ro.build.version.sdk)
     release=$(_prop ro.build.version.release)
     spl=$(_prop ro.build.version.security_patch)
+    build_id=$(_prop ro.build.id)
 
     _reg_set device HOM_DEV_FIRST_API_LEVEL "$api_level"
     _reg_set device HOM_DEV_SDK_INT         "$sdk_int"
     _reg_set device HOM_DEV_ANDROID_VER     "$release"
     _reg_set device HOM_DEV_SPL             "$spl"
+    _reg_set device HOM_DEV_BUILD_ID        "$build_id"
 
     log_var "HOM_DEV_FIRST_API_LEVEL" "$api_level" "API level device shipped with (first_api_level)"
     log_var "HOM_DEV_SDK_INT"         "$sdk_int"   "current SDK integer"
     log_var "HOM_DEV_ANDROID_VER"     "$release"   "Android version string"
     log_var "HOM_DEV_SPL"             "$spl"       "security patch level (YYYY-MM-DD)"
+    log_var "HOM_DEV_BUILD_ID"        "$build_id"  "build ID (e.g. AP4A.250405.002)"
 
     ux_print "  Android    : $release  (API $sdk_int, first: $api_level)"
+    ux_print "  Build ID   : $build_id"
     ux_print "  Patch level: $spl"
 
     # ── 3. A/B slots ─────────────────────────────────────────
@@ -249,6 +253,7 @@ partition naming, and boot security configuration"
         echo "Model          : $brand $model ($device)"
         echo "Fingerprint    : $fingerprint"
         echo "Android        : $release (API $sdk_int, first=$api_level)"
+        echo "Build ID       : $build_id"
         echo "Security Patch : $spl"
         echo "A/B slots      : $is_ab (slot: $current_slot)"
         echo "SAR            : $sar"
