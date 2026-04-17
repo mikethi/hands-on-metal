@@ -38,12 +38,13 @@ _TMP="${TMPDIR:-/tmp}"
 curl -L -o "$_TMP/magisk.apk" \
   "https://github.com/topjohnwu/Magisk/releases/download/${MAGISK_VER}/Magisk-${MAGISK_VER}.apk"
 
-unzip -j "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk64.so'   -d "$_TMP/"
-unzip -j "$_TMP/magisk.apk" 'lib/armeabi-v7a/libmagisk32.so' -d "$_TMP/"
-unzip -j "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagiskinit.so' -d "$_TMP/"
+unzip -jo "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk.so'    -d "$_TMP/"
+cp "$_TMP/libmagisk.so"     tools/magisk64   && chmod +x tools/magisk64
 
-cp "$_TMP/libmagisk64.so"   tools/magisk64   && chmod +x tools/magisk64
-cp "$_TMP/libmagisk32.so"   tools/magisk32   && chmod +x tools/magisk32
+unzip -jo "$_TMP/magisk.apk" 'lib/armeabi-v7a/libmagisk.so'  -d "$_TMP/"
+cp "$_TMP/libmagisk.so"     tools/magisk32   && chmod +x tools/magisk32
+
+unzip -jo "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagiskinit.so' -d "$_TMP/"
 cp "$_TMP/libmagiskinit.so" tools/magiskinit64 && chmod +x tools/magiskinit64
 
 rm "$_TMP/magisk.apk" "$_TMP"/lib*.so

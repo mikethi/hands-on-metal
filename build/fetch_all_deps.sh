@@ -174,20 +174,36 @@ else
         fi
 
         echo "  Extracting binaries from APK..."
-        unzip -j "$MAGISK_APK" \
-            'lib/arm64-v8a/libmagisk64.so' \
-            'lib/armeabi-v7a/libmagisk32.so' \
-            'lib/arm64-v8a/libmagiskinit.so' \
+        # Magisk v26+ renamed libmagisk64.so / libmagisk32.so to
+        # libmagisk.so under each ABI directory.  Because both ABIs
+        # share the same filename we must extract them one at a time
+        # to avoid overwriting.
+
+        unzip -jo "$MAGISK_APK" 'lib/arm64-v8a/libmagisk.so' \
             -d "$_TMP/" 2>/dev/null || {
-                fail "Extraction failed — APK may not contain expected library paths."
+                fail "Failed to extract libmagisk.so (arm64) from APK."
                 fail "Check the Magisk release at: $MAGISK_APK_URL"
                 exit 1
             }
+        cp "$_TMP/libmagisk.so" "$TOOLS_DIR/magisk64" && chmod +x "$TOOLS_DIR/magisk64"
 
-        cp "$_TMP/libmagisk64.so"   "$TOOLS_DIR/magisk64"   && chmod +x "$TOOLS_DIR/magisk64"
-        cp "$_TMP/libmagisk32.so"   "$TOOLS_DIR/magisk32"   && chmod +x "$TOOLS_DIR/magisk32"
+        unzip -jo "$MAGISK_APK" 'lib/armeabi-v7a/libmagisk.so' \
+            -d "$_TMP/" 2>/dev/null || {
+                fail "Failed to extract libmagisk.so (arm32) from APK."
+                fail "Check the Magisk release at: $MAGISK_APK_URL"
+                exit 1
+            }
+        cp "$_TMP/libmagisk.so" "$TOOLS_DIR/magisk32" && chmod +x "$TOOLS_DIR/magisk32"
+
+        unzip -jo "$MAGISK_APK" 'lib/arm64-v8a/libmagiskinit.so' \
+            -d "$_TMP/" 2>/dev/null || {
+                fail "Failed to extract libmagiskinit.so from APK."
+                fail "Check the Magisk release at: $MAGISK_APK_URL"
+                exit 1
+            }
         cp "$_TMP/libmagiskinit.so" "$TOOLS_DIR/magiskinit64" && chmod +x "$TOOLS_DIR/magiskinit64"
-        rm -f "$_TMP/libmagisk64.so" "$_TMP/libmagisk32.so" "$_TMP/libmagiskinit.so"
+
+        rm -f "$_TMP/libmagisk.so" "$_TMP/libmagiskinit.so"
 
         ok "magisk64, magisk32, magiskinit64 → $TOOLS_DIR/"
 
