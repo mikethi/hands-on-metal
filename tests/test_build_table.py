@@ -170,7 +170,7 @@ class BuildTableTests(unittest.TestCase):
 
         original = build_table.FIELD_CHECKS
         try:
-            build_table.FIELD_CHECKS = [("valid_table", "bad-col", "x")]
+            build_table.FIELD_CHECKS = [("valid_table", "invalid@column", "x")]
             with self.assertRaises(ValueError):
                 build_table.update_fill_rates(db, run_id)
         finally:
