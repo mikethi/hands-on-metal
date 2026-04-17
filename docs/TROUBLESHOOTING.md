@@ -332,6 +332,104 @@ See [FORK_CONTRACT.md](FORK_CONTRACT.md) §1.9 for privacy variable definitions.
 
 ---
 
+## Empty or dummy hardware data (sandbox, CI, or Termux) {#empty-hw-data}
+
+`collect.sh` mirrors `/sys/class/regulator`, `/sys/class/display`, and related
+sysfs trees to capture real hardware data — including the microvolts values used
+to identify display-adapter power rails.  In three environments that data is
+absent or meaningless:
+
+| Environment | `HOM_HW_ENV` value | What you see |
+|---|---|---|
+| Real rooted device (Magisk service) | `android_rooted` | All regulators with real `microvolts` values |
+| Termux (any version, with or without `tsu`) | `termux` | Kernel's own regulators, but `microvolts` may be missing; display sysfs entries absent |
+| CI / sandbox host (GitHub Actions, Docker) | `sandbox_ci` | Only `regulator-dummy` entries; no `microvolts` files; no display class |
+| TWRP / recovery running collect_recovery.sh | `recovery` | No live sysfs; only mounted-partition files |
+| Termux running recovery zip manually | `termux_recovery` | Same as recovery + Termux warnings |
+
+`collect.sh` logs a warning and records `HOM_HW_ENV` in `env_registry.sh`
+automatically.  `failure_analysis.py` reads this value and adjusts its
+expectations so you always receive the same clear conclusion regardless of
+where the script ran.
+
+### How to verify the first 10 regulator entries contain real data
+
+After running `collect.sh`, check the log:
+
+```
+grep "regulator\." /sdcard/hands-on-metal/live_dump/collect.log | head -12
+```
+
+**Real hardware output** (display adapter rails visible):
+```
+regulator.1: name=vdd_display_oled   microvolts=1800000
+regulator.2: name=vdd_display_vci    microvolts=3000000
+regulator.3: name=vdd_display_iovcc  microvolts=1800000
+regulator.4: name=smps1              microvolts=900000
+...
+[OK   ] 24 regulator(s) found, 24 with real microvolts data.
+```
+
+**Sandbox / CI output** (dummy only — no real data):
+```
+regulator.1: name=regulator-dummy  microvolts=(no microvolts)
+[WARN ] 1 regulator(s) found but none have a microvolts file.
+[WARN ] All entries are likely kernel placeholders (e.g. regulator-dummy).
+```
+
+**Termux output** (kernel regulators present, display missing):
+```
+[WARN ] Running inside Termux (TERMUX_VERSION=0.118.0).
+regulator.1: name=regulator-dummy  microvolts=(no microvolts)
+[WARN ] /sys/class/display collected no entries.
+```
+
+### Remediation by environment
+
+**Sandbox / CI** — collect.sh is not designed to run on a host PC.  It must
+run on a real Android device as root via Magisk `service.sh`.  If you are
+testing the pipeline, use the sample data under `tools/` (see `tools/README.md`).
+
+**Termux without root** — Termux alone cannot read protected sysfs nodes or
+write to `/sdcard/hands-on-metal/` without Storage permission.  Grant Storage
+permission to Termux (`termux-setup-storage`) and use `tsu` (Termux su) to
+elevate, then re-run:
+
+```bash
+# inside Termux with Magisk-root available
+tsu
+sh /data/adb/modules/hands-on-metal/collect.sh
+```
+
+If `tsu` is unavailable, install it:
+
+```bash
+pkg install tsu
+```
+
+**Termux — display class missing** — `/sys/class/display` is only populated
+when the display driver is active.  This is normal in Termux when the screen
+is off or the display driver does not expose sysfs nodes.  Real display-adapter
+voltage data is captured by the Magisk service path, not Termux.
+
+**Recovery (collect_recovery.sh)** — the recovery script does not collect
+live sysfs data by design.  It reads mounted partition files.  Regulator and
+display voltage data is only available via the Magisk path (Mode A).
+
+### env_registry.sh variables written by the sanity check
+
+| Variable | Meaning |
+|---|---|
+| `HOM_HW_ENV` | Detected execution environment (`android_rooted`, `termux`, `sandbox_ci`, `recovery`, `termux_recovery`) |
+| `HOM_HW_REGULATOR_COUNT` | Total regulator entries found under `/sys/class/regulator` |
+| `HOM_HW_REGULATOR_REAL_MV_COUNT` | Entries that had a numeric `microvolts` value |
+
+`failure_analysis.py` uses `HOM_HW_ENV` to skip voltage-related checks when
+the environment cannot produce real data, so the analysis output remains
+accurate and actionable in all environments.
+
+---
+
 ## Per-device troubleshooting notes
 
 ### Samsung devices
