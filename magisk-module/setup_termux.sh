@@ -26,7 +26,7 @@ LOG="$OUT/setup_termux.log"
 
 # ── packages to install inside Termux ────────────────────────
 # Adjust this list as the project's needs evolve.
-REQUIRED_PACKAGES="python git curl wget openssh sqlite"
+REQUIRED_PACKAGES="python git curl wget openssh sqlite zip"
 
 # ── helpers ──────────────────────────────────────────────────
 

@@ -36,6 +36,9 @@ hands-on-metal/
 │   ├── build_offline_zip.sh  Build script
 │   └── partition_index.json  Offline partition naming database
 │
+├── check_deps.sh            Host-side dependency checker
+├── terminal_menu.sh         Interactive terminal launcher
+│
 ├── docs/
 │   ├── INSTALL.md            User guide (Magisk path)
 │   ├── RECOVERY_INSTALL.md   User guide (recovery path)
@@ -54,7 +57,10 @@ hands-on-metal/
 
 ```bash
 # Linux
-apt-get install zip unzip  # or brew install zip on macOS
+apt-get install zip unzip curl git tar  # or brew install zip on macOS
+
+# Verify everything is installed:
+bash check_deps.sh
 ```
 
 ### 2. Obtain optional bundled tools
@@ -73,9 +79,9 @@ chmod +x tools/busybox-arm64
 
 # Magisk binaries (download the Magisk apk and extract)
 # Magisk APK is a zip; the binaries are inside it.
-# Example for Magisk 27.0:
+# Example for Magisk 30.7:
 curl -L -o /tmp/magisk.apk \
-  https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
+  https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
 unzip -j /tmp/magisk.apk 'lib/arm64-v8a/libmagisk64.so' -d /tmp/
 cp /tmp/libmagisk64.so tools/magisk64
 chmod +x tools/magisk64
@@ -229,9 +235,9 @@ manifest_step "my_step_name" "OK" "optional note"
 
 ## Anti-rollback policy notes (May 2026)
 
-Starting with security patch level 2026-05-01, Android's AVB anti-rollback protection becomes more strictly enforced and Magisk adopted a policy update to match. The relevant Magisk patch flags are:
+Starting with security patch level 2026-05-07, Android's AVB anti-rollback protection becomes more strictly enforced and Magisk adopted a policy update to match. The relevant Magisk patch flags are:
 
-- `PATCHVBMETAFLAG=true` — patches the vbmeta flag byte in the boot image header, which is required for the device to boot the patched image without failing AVB verification on SPL >= 2026-05-01.
+- `PATCHVBMETAFLAG=true` — patches the vbmeta flag byte in the boot image header, which is required for the device to boot the patched image without failing AVB verification on SPL >= 2026-05-07.
 - `KEEPVERITY=true` — for A/B devices, must not strip dm-verity signatures.
 - `KEEPFORCEENCRYPT=true` — preserves the `forceencrypt` flag so /data remains encrypted.
 

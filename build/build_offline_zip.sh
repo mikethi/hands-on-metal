@@ -52,6 +52,11 @@ echo " Version: $VERSION"
 echo "============================================"
 echo ""
 
+# ── dependency check ──────────────────────────────────────────
+if [ "${HOM_DEPS_CHECKED:-}" != "1" ]; then
+    source "$REPO_ROOT/check_deps.sh" || exit 1
+fi
+
 # ── output directory ──────────────────────────────────────────
 mkdir -p "$DIST_DIR"
 

@@ -6,6 +6,9 @@ set -eu
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── dependency check (runs once per session) ──────────────────
+source "$REPO_ROOT/check_deps.sh" || exit 1
+
 build_script_index() {
     SCRIPT_LABELS=()
     SCRIPT_PATHS=()
@@ -62,6 +65,7 @@ run_selected() {
     echo "Running..."
     (
         cd "$REPO_ROOT" || exit 1
+        export HOM_DEPS_CHECKED
         if [ "$kind" = "python" ]; then
             if [ "${#args_array[@]}" -gt 0 ]; then
                 python3 "$script" "${args_array[@]}"
