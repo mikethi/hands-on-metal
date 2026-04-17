@@ -131,6 +131,7 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 | [`tools/`](tools/) | Optional binaries (`busybox-arm64`, `magisk64`, `magisk32`, `magiskinit64`) — not committed; fetched by `fetch_all_deps.sh` |
 | [`halium-shim/`](halium-shim/) | C shim + Makefile for Halium/libhybris bridge research |
 | [`tests/`](tests/) | Python unit tests for `parse_logs` and `build_table` |
+| [`setup.sh`](setup.sh) | One-step bootstrap — clones the repo, checks deps, fetches binaries, builds ZIPs |
 | [`terminal_menu.sh`](terminal_menu.sh) | Interactive terminal launcher — run any project script from one menu |
 | [`check_deps.sh`](check_deps.sh) | Host-side dependency checker — verifies all required tools are installed |
 | [`docs/`](docs/) | Full documentation (see below) |
@@ -156,28 +157,24 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 
 ### 1 — Clone and fetch all dependencies
 
+**One-liner** (requires `curl` and `git`):
+
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-setup.sh
-#!/usr/bin/env bash
-set -e
-# git is needed to clone — check before anything else
-if ! command -v git >/dev/null 2>&1; then
-    echo "ERROR: git is not installed." >&2
-    echo "  Debian / Ubuntu : sudo apt install git" >&2
-    echo "  Termux          : pkg install git" >&2
-    echo "  Fedora          : sudo dnf install git" >&2
-    echo "  macOS           : xcode-select --install" >&2
-    exit 1
-fi
-git clone https://github.com/mikethi/hands-on-metal.git
-cd hands-on-metal
-bash check_deps.sh              # verify host tools (optional — runs automatically)
-bash build/fetch_all_deps.sh
-EOF
-chmod +x /tmp/hands-on-metal-setup.sh
-/tmp/hands-on-metal-setup.sh
+curl -fsSL https://raw.githubusercontent.com/mikethi/hands-on-metal/main/setup.sh | bash
 cd hands-on-metal               # enter the repo after setup
 ```
+
+**Or clone first**, then run the setup script locally:
+
+```bash
+git clone https://github.com/mikethi/hands-on-metal.git
+cd hands-on-metal
+bash setup.sh
+```
+
+If `git` is not installed the script prints platform-specific install
+instructions (Debian/Ubuntu, Termux, Fedora, Arch/Manjaro, macOS) and exits.
+The script is safe to re-run — it skips steps that are already complete.
 
 `fetch_all_deps.sh` will:
 
