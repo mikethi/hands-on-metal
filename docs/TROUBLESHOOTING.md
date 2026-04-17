@@ -45,23 +45,54 @@ python pipeline/failure_analysis.py \
    NO  → Unlock bootloader first (see INSTALL_HUB.md)
    YES → Continue
 
-2. Can you list partitions?
-   Run in TWRP terminal or adb shell:
-     ls /dev/block/bootdevice/by-name/
-     ls /dev/block/by-name/
+2. Do you have root access?
+   YES → The script will automatically DD-copy the live partition.
+         If auto-discovery still fails, list partitions manually:
+           ls /dev/block/bootdevice/by-name/
+           ls /dev/block/by-name/
+   NO  → Continue to step 3.
 
-   No output / command not found?
-   → Your device uses a platform-specific by-name path.
-     Try: ls /dev/block/platform/
-     Look for a directory containing 'by-name'
+3. Is this a Google Pixel device?
+   YES → The installer will offer to download the factory image
+         from Google and extract boot.img / init_boot.img.
+         Requires: network access, curl, unzip.
+         You need the build ID (shown in Settings → About phone).
+   NO  → Continue to step 4.
 
-3. Is "boot" or "init_boot" in the partition list?
-   NO  → Unusual device layout. Check:
-           ls /dev/block/
-         Some devices use mmcblk0p* naming without symlinks.
-         File a new-device report (see GOVERNANCE.md).
-   YES → Enter the full path manually when prompted.
+4. Can you supply the image manually?
+   a) Download the factory image on your PC, extract boot.img
+      (or init_boot.img for API 33+), and push to device:
+        adb push boot.img /sdcard/Download/
+      The installer will detect it on the next run.
+   b) Enter the block device path manually when prompted.
+      Common locations:
+        /dev/block/bootdevice/by-name/boot
+        /dev/block/by-name/boot
+        /dev/block/platform/<soc>/by-name/boot
 ```
+
+**boot vs init_boot (API 33+ / Android 13+):**
+
+| Android version | Partition to patch | Why |
+|----------------|-------------------|-----|
+| API ≤ 32 (Android 12L and below) | `boot` | init_boot does not exist |
+| API 33+ (Android 13+) with init_boot | `init_boot` | Kernel stays in boot; Magisk patches init ramdisk only |
+| API 33+ without init_boot partition | `boot` | Some upgraded devices lack init_boot; use boot as fallback |
+
+The installer reads `HOM_DEV_BOOT_PART` (set by `device_profile.sh`) and targets the
+correct partition automatically.  If the factory image is downloaded and the requested
+partition (e.g. init_boot.img) is not present, the script falls back to boot.img.
+
+**Acquisition methods (checked in order):**
+
+| Method | Env value | When used |
+|--------|-----------|-----------|
+| Live DD from device | `root_dd` | Root access and block device found |
+| Pre-placed file | `pre_placed` | Image already in `/sdcard/Download/` or boot_work |
+| Google factory download | `factory_download` | Google Pixel device with network + curl + unzip |
+| Manual user prompt | `user_prompt` | All automatic methods failed |
+
+Check `HOM_BOOT_IMG_METHOD` in env_registry.sh to see which method was used.
 
 **Android version / device notes:**
 
@@ -71,9 +102,11 @@ python pipeline/failure_analysis.py \
 | Samsung non-AB | Platform path `/dev/block/platform/...` | Enter path manually |
 | MediaTek with `/dev/block/by-name/` | by-name not under bootdevice | Use `/dev/block/by-name/boot` |
 | A/B device, wrong slot | Partition found but has slot suffix | Try `boot_a` or `boot_b` explicitly |
+| No root, no network | Cannot DD or download | Extract on PC and `adb push` to `/sdcard/Download/` |
 
 **Logs to check:**
 - `[VAR  ]` lines for `HOM_DEV_BOOT_PART`, `HOM_DEV_BOOT_DEV`, `HOM_DEV_INIT_BOOT_DEV`
+- `[VAR  ]` line for `HOM_BOOT_IMG_METHOD` — shows which acquisition path succeeded
 - `[ERROR]` lines from `boot_image` script
 
 ---
