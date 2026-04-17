@@ -36,6 +36,9 @@ hands-on-metal/
 │   ├── build_offline_zip.sh  Build script
 │   └── partition_index.json  Offline partition naming database
 │
+├── check_deps.sh            Host-side dependency checker
+├── terminal_menu.sh         Interactive terminal launcher
+│
 ├── docs/
 │   ├── INSTALL.md            User guide (Magisk path)
 │   ├── RECOVERY_INSTALL.md   User guide (recovery path)
@@ -54,7 +57,10 @@ hands-on-metal/
 
 ```bash
 # Linux
-apt-get install zip unzip  # or brew install zip on macOS
+apt-get install zip unzip curl git tar  # or brew install zip on macOS
+
+# Verify everything is installed:
+bash check_deps.sh
 ```
 
 ### 2. Obtain optional bundled tools

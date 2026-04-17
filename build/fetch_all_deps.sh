@@ -109,8 +109,11 @@ echo "=============================================="
 
 # ── pre-flight checks ─────────────────────────────────────────
 step "Checking required host tools..."
-require_cmd git curl unzip zip python3
-ok "git, curl, unzip, zip, python3 all found"
+if [ "${HOM_DEPS_CHECKED:-}" != "1" ]; then
+    source "$REPO_ROOT/check_deps.sh" || exit 1
+else
+    ok "Dependencies already verified"
+fi
 
 # ── ensure directories exist ──────────────────────────────────
 mkdir -p "$TOOLS_DIR" "$DIST_DIR"

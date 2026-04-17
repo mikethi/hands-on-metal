@@ -101,13 +101,20 @@ Both paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INS
 | `git` | Any modern version | Cloning the repo and running `fetch_all_deps.sh` |
 | `zip` / `unzip` | Any | Building and extracting flashable ZIPs |
 | `curl` | Any | Downloading Magisk APK and busybox binary |
+| `tar` | Any | Bundle creation via `git archive` |
 | `sha256sum` | Any (`shasum -a 256` on macOS) | Checksum verification |
 | `adb` | Optional | Pushing ZIPs / reading logs without physical transfer |
 | `file` / `nm` / `readelf` | Optional | Verifying bundled ARM binaries; used by `parse_symbols.py` |
+| `c++filt` | Optional | C++ symbol demangling (`parse_symbols.py`) |
+| `openssl` | Optional | Fallback SHA-256 hashing on device |
+
+Run `bash check_deps.sh` to verify all dependencies in one step.
+The check runs automatically when using `terminal_menu.sh` or the build scripts.
 
 > **No third-party Python packages are required.**  
 > All pipeline scripts use the Python standard library (`sqlite3`, `argparse`, `json`,
 > `urllib`, `gzip`, `lzma`, `bz2`, `pathlib`, …).
+> Optional packages `lz4` and `zstandard` improve boot image decompression coverage.
 
 ---
 
@@ -125,6 +132,7 @@ Both paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INS
 | [`halium-shim/`](halium-shim/) | C shim + Makefile for Halium/libhybris bridge research |
 | [`tests/`](tests/) | Python unit tests for `parse_logs` and `build_table` |
 | [`terminal_menu.sh`](terminal_menu.sh) | Interactive terminal launcher — run any project script from one menu |
+| [`check_deps.sh`](check_deps.sh) | Host-side dependency checker — verifies all required tools are installed |
 | [`docs/`](docs/) | Full documentation (see below) |
 
 ---
@@ -151,6 +159,7 @@ Both paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INS
 ```bash
 git clone https://github.com/mikethi/hands-on-metal.git
 cd hands-on-metal
+bash check_deps.sh              # verify host tools (optional — runs automatically)
 bash build/fetch_all_deps.sh
 ```
 
@@ -272,17 +281,36 @@ All dependencies are pulled by `build/fetch_all_deps.sh`.
 | `sqlite3` | `hardware_map.sqlite` database |
 | `urllib` | `upload.py`, `github_notify.py` — GitHub API calls |
 | `gzip` / `lzma` / `bz2` | `unpack_images.py` — boot image decompression |
+| `hashlib` / `struct` / `io` | `unpack_images.py` — image parsing |
+| `xml.etree.ElementTree` | `parse_manifests.py` — VINTF XML parsing |
+| `subprocess` | `parse_symbols.py` — calls `c++filt`; `build_table.py` — runs sub-scripts |
 | `argparse`, `json`, `pathlib`, `re`, `os`, `sys` | All scripts |
+
+Optional packages (improve boot image decompression coverage):
+
+| Package | Use |
+|---------|-----|
+| `lz4` | `unpack_images.py` — LZ4-compressed boot images |
+| `zstandard` | `unpack_images.py` — Zstandard-compressed boot images |
 
 ### Shell / on-device tools
 
 | Tool | Source |
 |------|--------|
 | `sh` / `mksh` | Android `/system/bin/sh` or Magisk busybox |
-| `getprop` | Android system |
+| `getprop` / `setprop` | Android system |
+| `dd` | Boot image read/write (`boot_image.sh`, `flash.sh`, `collect.sh`) |
+| `mount` / `umount` | Partition access (`collect_recovery.sh`, `env_detect.sh`) |
 | `busybox` (optional) | Bundled in the ZIPs, or system busybox |
-| `zip` / `unzip` | Host PC; used by `build_offline_zip.sh` |
+| `zip` / `unzip` | Host PC; used by `build_offline_zip.sh` and `fetch_all_deps.sh` |
 | `curl` | Host PC; used by `fetch_all_deps.sh` |
+| `tar` | Host PC; used by `fetch_all_deps.sh` (git archive) |
+| `sha256sum` / `openssl` | Checksum verification (host and device) |
+| `nm` / `readelf` | Vendor library symbol analysis (`collect.sh`, `parse_symbols.py`) |
+| `c++filt` (optional) | C++ symbol demangling (`parse_symbols.py`) |
+| `dmsetup` (optional) | dm-crypt / dm-verity table inspection (`collect.sh`) |
+| `lshal` / `lsmod` / `modinfo` | HAL and kernel module inventory (`collect.sh`) |
+| `dmesg` | Kernel log collection (`collect.sh`) |
 | `adb` (optional) | [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) |
 
 ### Termux (auto-bootstrapped when no system Python exists)
@@ -290,7 +318,7 @@ All dependencies are pulled by `build/fetch_all_deps.sh`.
 `setup_termux.sh` installs the following via `pkg` (compatible with any Termux version and any setup — Play Store, F-Droid, or GitHub release):
 
 ```
-python  git  curl  wget  openssh  sqlite
+python  git  curl  wget  openssh  sqlite  zip
 ```
 
 ---

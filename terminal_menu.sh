@@ -65,6 +65,7 @@ run_selected() {
     echo "Running..."
     (
         cd "$REPO_ROOT" || exit 1
+        export HOM_DEPS_CHECKED
         if [ "$kind" = "python" ]; then
             if [ "${#args_array[@]}" -gt 0 ]; then
                 python3 "$script" "${args_array[@]}"

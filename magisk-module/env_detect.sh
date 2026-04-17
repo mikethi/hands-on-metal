@@ -108,7 +108,7 @@ done
 log "Detecting Python installations..."
 
 PY_FOUND=0
-for py_cmd in python3 python python3.12 python3.11 python3.10 python3.9 python3.8; do
+for py_cmd in python3 python python3.13 python3.12 python3.11 python3.10 python3.9 python3.8; do
     p=$(command -v "$py_cmd" 2>/dev/null || true)
     [ -z "$p" ] && continue
     rp=$(real_abs "$p")
@@ -133,6 +133,74 @@ if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
     reg_set python HOM_PYTHON_SITE_PACKAGES "$SITE"
 fi
 
+# ── 3b. Python version adequacy ──────────────────────────────
+# Pipeline scripts require Python 3.7+ (from __future__ import
+# annotations), and the project documents Python 3.8+ as the
+# minimum.  Record whether the canonical Python meets the bar.
+
+if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
+    PY_MAJOR=$("$CANONICAL" -c "import sys; print(sys.version_info.major)" 2>/dev/null || echo 0)
+    PY_MINOR=$("$CANONICAL" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || echo 0)
+    reg_set python HOM_PYTHON_MAJOR "$PY_MAJOR"
+    reg_set python HOM_PYTHON_MINOR "$PY_MINOR"
+    if [ "$PY_MAJOR" -ge 3 ] 2>/dev/null && [ "$PY_MINOR" -ge 8 ] 2>/dev/null; then
+        reg_set python HOM_PYTHON_ADEQUATE "true"
+    else
+        reg_set python HOM_PYTHON_ADEQUATE "false"
+        log "WARNING: Python $PY_MAJOR.$PY_MINOR found but 3.8+ is required for pipeline scripts"
+    fi
+else
+    reg_set python HOM_PYTHON_ADEQUATE "false"
+fi
+
+# ── 3c. Python stdlib module validation ──────────────────────
+# Verify that all stdlib modules required by the pipeline
+# scripts are importable.  This catches stripped/minimal Python
+# installs (common in Termux or embedded builds).
+
+log "Validating Python stdlib modules..."
+
+PY_STDLIB_OK=true
+if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
+    for mod in sqlite3 gzip lzma bz2 json argparse re pathlib struct io \
+               hashlib math glob tempfile unittest subprocess; do
+        if "$CANONICAL" -c "import $mod" 2>/dev/null; then
+            reg_set python "HOM_PYMOD_$(echo "$mod" | tr 'a-z' 'A-Z')" "ok"
+        else
+            reg_set python "HOM_PYMOD_$(echo "$mod" | tr 'a-z' 'A-Z')" "MISSING"
+            PY_STDLIB_OK=false
+            log "WARNING: Python stdlib module '$mod' cannot be imported"
+        fi
+    done
+    # xml.etree.ElementTree (used by parse_manifests.py)
+    if "$CANONICAL" -c "from xml.etree import ElementTree" 2>/dev/null; then
+        reg_set python HOM_PYMOD_XML_ETREE "ok"
+    else
+        reg_set python HOM_PYMOD_XML_ETREE "MISSING"
+        PY_STDLIB_OK=false
+        log "WARNING: Python stdlib module 'xml.etree.ElementTree' cannot be imported"
+    fi
+fi
+reg_set python HOM_PYTHON_STDLIB_OK "$PY_STDLIB_OK"
+
+# ── 3d. Python optional dependency detection ──────────────────
+# unpack_images.py can use lz4 and zstandard for additional
+# compression formats.  These are NOT required but improve
+# coverage for boot images that use non-standard compressors.
+
+log "Detecting optional Python packages..."
+
+if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
+    for opt in lz4 zstandard; do
+        if "$CANONICAL" -c "import $opt" 2>/dev/null; then
+            optver=$("$CANONICAL" -c "import $opt; print(getattr($opt, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
+            reg_set python "HOM_PYOPT_$(echo "$opt" | tr 'a-z' 'A-Z')" "$optver"
+        else
+            reg_set python "HOM_PYOPT_$(echo "$opt" | tr 'a-z' 'A-Z')" "not_installed"
+        fi
+    done
+fi
+
 # ── 4. pip / package managers ─────────────────────────────────
 
 log "Detecting pip and package managers..."
@@ -143,6 +211,22 @@ for pm in pip3 pip pip3.12 pip3.11; do
     rp=$(real_abs "$p")
     key="HOM_PIP_$(echo "$pm" | tr '.' '_' | tr 'a-z' 'A-Z')"
     reg_set_path python "$key" "$rp"
+done
+
+# ── 4b. Pipeline external tool detection ──────────────────────
+# parse_symbols.py calls c++filt via subprocess for C++ symbol
+# demangling.  Record its availability.
+
+log "Detecting pipeline external tools..."
+
+for ptool in c++filt nm readelf file; do
+    p=$(command -v "$ptool" 2>/dev/null || true)
+    key="HOM_PIPELINE_$(echo "$ptool" | tr 'a-z+' 'A-Z_' | tr '-' '_')"
+    if [ -n "$p" ]; then
+        reg_set_path pipeline "$key" "$p"
+    else
+        reg_set pipeline "$key" "not_found"
+    fi
 done
 
 # ── 5. Termux detection ───────────────────────────────────────
@@ -198,13 +282,94 @@ else
     reg_set termux HOM_TERMUX_SHOULD_INSTALL "false"
 fi
 
-# ── 6. Permissions / SELinux context ─────────────────────────
+# ── 6. Permissions / SELinux / execution context ─────────────
 
-log "Detecting permissions and SELinux context..."
+log "Detecting permissions, SELinux, and execution context..."
 
 reg_set shell HOM_WHOAMI "$(id 2>/dev/null || echo unknown)"
 reg_set shell HOM_SELINUX_CONTEXT "$(cat /proc/self/attr/current 2>/dev/null | tr -d '\0' || echo unknown)"
 reg_set shell HOM_SELINUX_ENFORCE "$(cat /sys/fs/selinux/enforce 2>/dev/null || echo unknown)"
+
+# ── 6b. Execution node detection ─────────────────────────────
+# Determine what privilege level / context we are running in:
+#   root_magisk    — uid 0 via Magisk su or service.sh
+#   root_recovery  — uid 0 in TWRP/OrangeFox recovery
+#   root_other     — uid 0 from unknown source
+#   unprivileged   — not root
+
+log "Detecting execution node..."
+
+EXEC_UID=$(id -u 2>/dev/null || echo 9999)
+EXEC_NODE="unprivileged"
+
+if [ "$EXEC_UID" = "0" ]; then
+    if [ -d /data/adb/magisk ]; then
+        EXEC_NODE="root_magisk"
+    elif [ -d /tmp/recovery ] || [ -n "${TWRP:-}" ] || [ -f /sbin/recovery ]; then
+        EXEC_NODE="root_recovery"
+    else
+        EXEC_NODE="root_other"
+    fi
+fi
+
+reg_set shell HOM_EXEC_UID  "$EXEC_UID"
+reg_set shell HOM_EXEC_NODE "$EXEC_NODE"
+
+# Magisk version (if available)
+if command -v magisk >/dev/null 2>&1; then
+    _mg_ver=$(magisk -v 2>/dev/null | head -1 || echo "unknown")
+    _mg_code=$(magisk -V 2>/dev/null | head -1 || echo "0")
+    reg_set shell HOM_MAGISK_VERSION "$_mg_ver"
+    reg_set shell HOM_MAGISK_VER_CODE "$_mg_code"
+fi
+
+# ── 6c. Folder permissions audit ─────────────────────────────
+# Verify write access to the directories the workflow uses.
+# Record per-directory status so downstream scripts can adapt.
+
+log "Auditing folder permissions..."
+
+for dir_path in /sdcard/hands-on-metal /data/adb /data/local/tmp; do
+    dir_key="HOM_PERM_$(echo "$dir_path" | sed 's|/|_|g' | sed 's|^_||' | tr 'a-z-' 'A-Z_')"
+    if [ -d "$dir_path" ]; then
+        # Check read access
+        if [ -r "$dir_path" ]; then
+            dir_read="true"
+        else
+            dir_read="false"
+        fi
+        # Check write access with a temporary file probe
+        _test_file="$dir_path/.hom_perm_test_$$"
+        if touch "$_test_file" 2>/dev/null; then
+            rm -f "$_test_file"
+            dir_write="true"
+        else
+            dir_write="false"
+        fi
+        reg_set perm "${dir_key}_EXISTS"   "true"
+        reg_set perm "${dir_key}_READABLE" "$dir_read"
+        reg_set perm "${dir_key}_WRITABLE" "$dir_write"
+    else
+        # Try to create the directory (needed for first run)
+        if mkdir -p "$dir_path" 2>/dev/null; then
+            reg_set perm "${dir_key}_EXISTS"   "true"
+            reg_set perm "${dir_key}_READABLE" "true"
+            reg_set perm "${dir_key}_WRITABLE" "true"
+        else
+            reg_set perm "${dir_key}_EXISTS"   "false"
+            reg_set perm "${dir_key}_READABLE" "false"
+            reg_set perm "${dir_key}_WRITABLE" "false"
+        fi
+    fi
+done
+
+# Output directory must be writable — warn loudly if not
+_out_key="HOM_PERM_SDCARD_HANDS_ON_METAL"
+_out_writable=$(grep "^${_out_key}_WRITABLE=" "$ENV_REGISTRY" 2>/dev/null | \
+    cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//' || echo false)
+if [ "$_out_writable" != "true" ]; then
+    log "ERROR: /sdcard/hands-on-metal is NOT writable — workflow cannot proceed"
+fi
 
 # ── 7. Key filesystem paths ───────────────────────────────────
 
@@ -239,14 +404,61 @@ for g in /dev/block/platform/*/by-name \
     }
 done
 
-# ── 9. Encryption state ───────────────────────────────────────
+# ── 9. Encryption / decryption readiness ──────────────────────
+# Record the full encryption state so that downstream scripts
+# (collect.sh, unpack_images.py, failure_analysis.py) know what
+# to expect when accessing /data or analysing boot images.
 
-log "Recording encryption state..."
+log "Recording encryption state and decryption readiness..."
 
-reg_set crypto HOM_CRYPTO_STATE "$(getprop ro.crypto.state 2>/dev/null || echo unknown)"
-reg_set crypto HOM_CRYPTO_TYPE "$(getprop ro.crypto.type 2>/dev/null || echo unknown)"
-reg_set crypto HOM_CRYPTO_FILENAMES_MODE "$(getprop ro.crypto.volume.filenames_mode 2>/dev/null || echo unknown)"
-reg_set crypto HOM_VOLD_DECRYPT "$(getprop vold.decrypt 2>/dev/null || echo unknown)"
+CRYPTO_STATE=$(getprop ro.crypto.state 2>/dev/null || echo unknown)
+CRYPTO_TYPE=$(getprop ro.crypto.type 2>/dev/null || echo unknown)
+CRYPTO_FN_MODE=$(getprop ro.crypto.volume.filenames_mode 2>/dev/null || echo unknown)
+VOLD_DECRYPT=$(getprop vold.decrypt 2>/dev/null || echo unknown)
+
+reg_set crypto HOM_CRYPTO_STATE "$CRYPTO_STATE"
+reg_set crypto HOM_CRYPTO_TYPE "$CRYPTO_TYPE"
+reg_set crypto HOM_CRYPTO_FILENAMES_MODE "$CRYPTO_FN_MODE"
+reg_set crypto HOM_VOLD_DECRYPT "$VOLD_DECRYPT"
+
+# FDE vs FBE classification (used by unpack_images.py / failure_analysis.py)
+# FDE (Full Disk Encryption) — pre-API 24, ro.crypto.state=encrypted, ro.crypto.type=block
+# FBE (File-Based Encryption) — API 24+, ro.crypto.state=encrypted, ro.crypto.type=file
+CRYPTO_CLASS="none"
+case "$CRYPTO_STATE" in
+    encrypted)
+        case "$CRYPTO_TYPE" in
+            block) CRYPTO_CLASS="FDE" ;;
+            file)  CRYPTO_CLASS="FBE" ;;
+            *)     CRYPTO_CLASS="unknown_encrypted" ;;
+        esac
+        ;;
+    unencrypted) CRYPTO_CLASS="none" ;;
+esac
+reg_set crypto HOM_CRYPTO_CLASS "$CRYPTO_CLASS"
+
+# Is /data currently decrypted (userdata readable)?
+if [ -r /data/data/. ] && [ -d /data/data ]; then
+    reg_set crypto HOM_USERDATA_DECRYPTED "true"
+else
+    reg_set crypto HOM_USERDATA_DECRYPTED "false"
+fi
+
+# dm-crypt / dm-verity kernel module availability
+for kmod in dm_crypt dm_verity; do
+    if [ -d "/sys/module/$kmod" ]; then
+        reg_set crypto "HOM_KMOD_$(echo "$kmod" | tr 'a-z' 'A-Z')" "loaded"
+    else
+        reg_set crypto "HOM_KMOD_$(echo "$kmod" | tr 'a-z' 'A-Z')" "not_loaded"
+    fi
+done
+
+# dmsetup availability (used by collect.sh for dm table inspection)
+if command -v dmsetup >/dev/null 2>&1; then
+    reg_set crypto HOM_DMSETUP_AVAILABLE "true"
+else
+    reg_set crypto HOM_DMSETUP_AVAILABLE "false"
+fi
 
 # ── 10. Module output directory ───────────────────────────────
 
@@ -255,6 +467,75 @@ log "Recording output paths..."
 reg_set_path path HOM_OUT_DIR "$(real_abs "$OUT")"
 reg_set_path path HOM_ENV_REGISTRY "$(real_abs "$ENV_REGISTRY")"
 reg_set_path path HOM_LIVE_DUMP "$(real_abs "$OUT/live_dump")"
+
+# ── 11. Android API-level feature flags ───────────────────────
+# Record which Android features are expected at the detected API
+# level.  These flags let every downstream script adapt its
+# behaviour without hard-coding API thresholds themselves.
+#
+# The thresholds are derived from AOSP source and the scripts
+# that depend on them:
+#   API 21 (5.0)  — minimum supported
+#   API 24 (7.0)  — File-Based Encryption (FBE) introduced
+#   API 26 (8.0)  — Treble / VNDK enforced
+#   API 28 (9.0)  — System-as-Root (SAR) default
+#   API 29 (10)   — Dynamic partitions / APEX
+#   API 30 (11)   — Virtual A/B
+#   API 33 (13)   — init_boot partition (generic kernel image)
+#   API 35 (15)   — current upper test boundary
+
+log "Computing Android API-level feature flags..."
+
+SDK_INT=$(getprop ro.build.version.sdk 2>/dev/null || echo 0)
+# Ensure we have a numeric value
+case "$SDK_INT" in
+    ''|*[!0-9]*) SDK_INT=0 ;;
+esac
+reg_set api HOM_API_SDK_INT "$SDK_INT"
+
+# File-Based Encryption support (API 24+)
+if [ "$SDK_INT" -ge 24 ] 2>/dev/null; then
+    reg_set api HOM_API_FBE_SUPPORTED "true"
+else
+    reg_set api HOM_API_FBE_SUPPORTED "false"
+fi
+
+# Treble / VNDK enforced (API 26+)
+if [ "$SDK_INT" -ge 26 ] 2>/dev/null; then
+    reg_set api HOM_API_TREBLE_ENFORCED "true"
+else
+    reg_set api HOM_API_TREBLE_ENFORCED "false"
+fi
+
+# System-as-Root default (API 28+)
+if [ "$SDK_INT" -ge 28 ] 2>/dev/null; then
+    reg_set api HOM_API_SAR_DEFAULT "true"
+else
+    reg_set api HOM_API_SAR_DEFAULT "false"
+fi
+
+# Dynamic partitions / APEX (API 29+)
+if [ "$SDK_INT" -ge 29 ] 2>/dev/null; then
+    reg_set api HOM_API_DYNAMIC_PARTITIONS "true"
+    reg_set api HOM_API_APEX_SUPPORTED "true"
+else
+    reg_set api HOM_API_DYNAMIC_PARTITIONS "false"
+    reg_set api HOM_API_APEX_SUPPORTED "false"
+fi
+
+# Virtual A/B (API 30+)
+if [ "$SDK_INT" -ge 30 ] 2>/dev/null; then
+    reg_set api HOM_API_VIRTUAL_AB "true"
+else
+    reg_set api HOM_API_VIRTUAL_AB "false"
+fi
+
+# init_boot partition / Generic Kernel Image (API 33+)
+if [ "$SDK_INT" -ge 33 ] 2>/dev/null; then
+    reg_set api HOM_API_INIT_BOOT "true"
+else
+    reg_set api HOM_API_INIT_BOOT "false"
+fi
 
 # ── done ─────────────────────────────────────────────────────
 
