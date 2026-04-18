@@ -694,8 +694,7 @@ _extract_all_partitions_from_inner_zip() {
     # Standard boot-chain images shipped in Google factory inner ZIPs.
     # Not every image is present on every device / firmware — missing
     # entries are tolerated silently.
-    local candidates="boot.img init_boot.img vendor_boot.img dtbo.img \
-vbmeta.img vbmeta_system.img vbmeta_vendor.img recovery.img"
+    local candidates="boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img vbmeta_system.img vbmeta_vendor.img recovery.img"
 
     # Listing once is cheaper than probing each name with unzip.
     local listing
