@@ -110,3 +110,10 @@ fi
 # skips the redundant re-check automatically.
 source check_deps.sh
 bash build/fetch_all_deps.sh
+
+# ── Launch interactive menu ──────────────────────────────────
+# After setup, drop the user into the terminal menu by default.
+echo ""
+echo "Setup complete — launching terminal menu..."
+echo ""
+exec bash terminal_menu.sh
