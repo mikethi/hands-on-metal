@@ -133,20 +133,27 @@ and dependency checker (`check_deps.sh`).
 
 ### Which methods work in your situation
 
-| Your situation | Root? | Recovery? | Acquisition methods | Flash path | Install mode |
-|---------------|:---:|:---:|---|---|---|
-| **Magisk installed** | ✓ | ✗ | 1→2→3→4 (all available) | A (Magisk) | [INSTALL.md](INSTALL.md) |
-| **TWRP / OrangeFox** | ✓ | ✓ | 1→2→3→4 (all available) | B (Recovery) | [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md) |
-| **Unlocked BL + PC, no root, no recovery** | ✗ | ✗ | 2→3→4 (no root DD) | C (Fastboot) | This guide (C1 or C2) |
-| **Unlocked BL + PC + temp TWRP** | ✓³ | ✓³ | 1→2→3→4 (all via temp TWRP) | B (Recovery) | This guide (C1) |
-| **Locked bootloader** | ✗ | ✗ | None | None | Unlock first |
-| **No PC, no root, no recovery** | ✗ | ✗ | None | None | Not possible |
+| Your situation | Root? | Recovery? | Connection | Acquisition methods | Flash path | Install mode |
+|---------------|:---:|:---:|---|---|---|---|
+| **Magisk installed** | ✓ | ✗ | Any | 1→2→3→4 (all available) | A (Magisk) | [INSTALL.md](INSTALL.md) |
+| **TWRP / OrangeFox** | ✓ | ✓ | Any | 1→2→3→4 (all available) | B (Recovery) | [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md) |
+| **Unlocked BL + PC (USB)** | ✗ | ✗ | USB | 2→3→4 (no root DD) | C (Fastboot) | This guide (C1 or C2) |
+| **Unlocked BL + PC + temp TWRP** | ✓³ | ✓³ | USB | 1→2→3→4 (all via temp TWRP) | B (Recovery) | This guide (C1) |
+| **No root, WiFi ADB only** | ✗ | ✗ | WiFi | 2 (pre-place), dump | Dump only⁴ | `--wifi-setup` + `--dump` |
+| **No root, WiFi ADB + USB for flash** | ✗ | ✗ | WiFi → USB | 2→3→4 | C (Fastboot) | WiFi setup → `adb reboot bootloader` → USB flash |
+| **Termux self-loopback** | ✗ | ✗ | WiFi (self) | 2 (pre-place) | None⁵ | `--wifi-setup` self-loopback |
+| **Locked bootloader** | ✗ | ✗ | Any | None | None | Unlock first |
+| **No PC, no root, no recovery** | ✗ | ✗ | None | None | None | Not possible |
 
-³ `fastboot boot twrp.img` gives you a temporary recovery with root.
+³ `fastboot boot twrp.img` gives you a temporary recovery with root.  
+⁴ WiFi ADB cannot flash — use `--dump` to collect data, then connect USB for fastboot.  
+⁵ Self-loopback cannot flash the same device — pre-place boot image, then connect to a PC.
 
 > **Key insight:** Root access enables method 1 (root DD) and is required
 > for flash paths A and B. Without root, you must pre-place the boot image
-> (method 2) or use the fastboot flash path (C) from a PC.
+> (method 2) or use the fastboot flash path (C) from a PC. WiFi ADB
+> without root is useful for diagnostics, pre-placing files, and rebooting
+> to bootloader for subsequent USB fastboot operations.
 
 ## Where user input is required (fallback only)
 
@@ -713,6 +720,179 @@ adb devices
 adb reboot bootloader
 fastboot devices
 ```
+
+---
+
+## WiFi ADB for non-rooted TARGET devices
+
+Android 11+ includes **Wireless Debugging** — a built-in feature that
+enables ADB over WiFi **without root**. This is useful when:
+
+- TARGET has no root, no recovery, no USB cable available
+- You want to pre-place files, diagnose, or run ADB commands on TARGET
+- You want to self-connect (Termux on the same device connecting to its
+  own wireless debugging port)
+
+### What works over WiFi ADB without root
+
+| Action | WiFi ADB (no root) | Notes |
+|--------|:--:|---|
+| Push files to TARGET | ✓ | `adb push boot.img /sdcard/Download/` |
+| Pull files from TARGET | ✓ | `adb pull /sdcard/ ./backup/` |
+| Read device properties | ✓ | `adb shell getprop ro.product.model` |
+| List partition layout | ✓ | `adb shell ls /dev/block/by-name/` |
+| Read /proc (cpuinfo, version) | ✓ | Most /proc files are world-readable |
+| Read VINTF manifests | ✓ | `/vendor/etc/vintf/manifest.xml` etc. |
+| Run `dumpsys` services | ✓ | display, SurfaceFlinger, battery, etc. |
+| Reboot to recovery/bootloader | ✓ | `adb reboot recovery` / `adb reboot bootloader` |
+| **DD partition images** | ✗ | Requires root (`su -c dd if=...`) |
+| **Flash boot partition** | ✗ | Requires root DD or fastboot |
+| **Fastboot commands** | ✗ | Fastboot protocol not supported over WiFi |
+| **ADB sideload in TWRP** | ✓¹ | After `adb reboot recovery`, reconnect via USB |
+
+¹ After rebooting TARGET to recovery, the WiFi ADB connection drops.
+You must reconnect via USB cable for sideload, or re-pair in recovery
+if TWRP supports wireless ADB.
+
+### Guided WiFi setup via `host_flash.sh`
+
+```bash
+# On HOST — interactive WiFi ADB pairing and connection:
+bash build/host_flash.sh --wifi-setup
+
+# Supports:
+# - PC → non-rooted TARGET over WiFi
+# - Termux → non-rooted TARGET over WiFi
+# - Termux self-loopback (same device connects to its own wireless debugging)
+```
+
+The script guides you through:
+1. Enabling wireless debugging on TARGET
+2. Pairing (one-time) with the 6-digit code
+3. Connecting to TARGET's debugging port
+4. Verifying the connection
+
+### Self-loopback (Termux on same non-rooted device)
+
+This connects Termux ADB to its own device's wireless debugging port.
+No root needed. Useful for:
+
+- Pre-placing a boot image (`adb push boot.img /sdcard/Download/`)
+  so the installer's fallback method 2 can find it
+- Running diagnostics before connecting to a PC
+- Rebooting to bootloader (`adb reboot bootloader`) then connecting USB
+
+```bash
+# On device (Termux):
+bash build/host_flash.sh --wifi-setup
+# Choose option 1 (self-loopback)
+# Follow prompts to pair and connect
+
+# After connecting:
+adb push boot.img /sdcard/Download/    # pre-place for installer
+adb reboot bootloader                  # then connect USB for fastboot
+```
+
+> **Self-loopback limitations:** You cannot flash the device you're
+> running on via ADB/fastboot — the device can't reboot to
+> fastboot and maintain the connection. For flashing, use a PC
+> (Mode C1/C2) or Magisk app (Mode A).
+
+---
+
+## Diagnostic dump from TARGET (with or without root)
+
+`host_flash.sh --dump` collects diagnostic and partition data from TARGET.
+It adapts to what's available — collecting more data when root is present.
+
+```bash
+# On HOST — dump to default directory:
+bash build/host_flash.sh --dump
+
+# On HOST — dump to specific directory:
+bash build/host_flash.sh --dump ./my-device-dump/
+
+# On HOST — with WiFi ADB:
+bash build/host_flash.sh -s 192.168.1.100:42456 --dump
+```
+
+### What the dump collects
+
+| Data | Without root | With root | Pipeline use |
+|------|:---:|:---:|---|
+| Device properties (`getprop`) | ✓ | ✓ | `parse_manifests.py` — board summary |
+| Partition layout (by-name links) | ✓ | ✓ | `failure_analysis.py` — partition check |
+| `/proc/cpuinfo`, `/proc/meminfo` | ✓ | ✓ | `build_table.py` — hardware catalog |
+| `/proc/iomem` | Partial | ✓ (full) | `build_table.py` — MMIO address map |
+| `/proc/interrupts` | Partial | ✓ | `build_table.py` — IRQ assignments |
+| Device tree (`/proc/device-tree`) | ✓ | ✓ | `build_table.py` — SoC peripheral map |
+| Loaded kernel modules | ✓ | ✓ | `build_table.py` — driver inventory |
+| VINTF manifests (vendor/system) | ✓ | ✓ | `parse_manifests.py` — HAL catalog |
+| `dumpsys` (display, audio, camera) | ✓ | ✓ | Manual analysis |
+| Build/security info summary | ✓ | ✓ | `failure_analysis.py` — version check |
+| **Boot/init_boot partition image** | ✗ | ✓ | `unpack_images.py` — kernel, ramdisk, fstab |
+| **dtbo partition image** | ✗ | ✓ | `unpack_images.py` — device tree overlays |
+| **vbmeta partition image** | ✗ | ✓ | Anti-rollback index, AVB chain analysis |
+| **SELinux policy binary** | ✗ | ✓ | Policy analysis, device-specific contexts |
+| **Full /proc/iomem** | ✗ | ✓ | Complete MMIO map (restricted without root) |
+
+### What you can do with partition dumps
+
+**1. Pre-flash analysis** — understand TARGET before committing to flash:
+
+```bash
+# Run failure analysis against the dump
+python pipeline/failure_analysis.py --dump ./hom-dump/ \
+    --index build/partition_index.json
+```
+
+Checks anti-rollback, partition compatibility, known device issues,
+and boot image format (v0–v4) before you flash anything.
+
+**2. Boot image extraction → patch → fastboot flash (C2)**:
+
+With root, the dump extracts `boot.img` (or `init_boot.img`). This
+image can be transferred to another device's Magisk app for patching,
+then flashed back via fastboot:
+
+```bash
+# 1. Dump includes boot.img
+ls ./hom-dump/boot_images/
+
+# 2. Transfer to a device with Magisk for patching
+adb push ./hom-dump/boot_images/boot.img /sdcard/Download/
+# On that device: Magisk → Patch a File → select boot.img
+adb pull /sdcard/Download/magisk_patched-*.img ./patched_boot.img
+
+# 3. Flash back to TARGET
+bash build/host_flash.sh --c2 ./patched_boot.img
+```
+
+**3. Hardware catalog** — build a full SQLite hardware database:
+
+```bash
+python pipeline/build_table.py --dump ./hom-dump/ --mode C
+# Creates hardware_map.sqlite with:
+#   - iomem address ranges → peripheral names
+#   - IRQ assignments → driver names
+#   - Device tree nodes → SoC components
+#   - VINTF HAL interfaces → hardware features
+#   - Kernel modules → driver inventory
+```
+
+**4. Ramdisk extraction** — inspect init configuration:
+
+```bash
+python pipeline/unpack_images.py --dump ./hom-dump/ --run-id 1
+# Extracts from boot.img:
+#   - fstab.*     → partition encryption flags, filesystem types
+#   - init.rc     → service definitions, early boot actions
+#   - default.prop → build properties embedded in ramdisk
+```
+
+**5. Cross-device comparison** — compare partition layouts, HALs,
+and hardware across different devices or after OTA updates by
+running dumps before and after.
 
 ---
 

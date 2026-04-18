@@ -428,6 +428,530 @@ wait_for_device() {
     return 1
 }
 
+# ── WiFi ADB setup helper ────────────────────────────────────
+# Guides the user through wireless ADB pairing and connection.
+# Works for:
+#   - PC HOST → non-rooted TARGET over WiFi
+#   - Termux HOST → non-rooted TARGET over WiFi
+#   - Termux self-loopback → same device connects to its own wireless debugging
+#
+# No root is required on TARGET — Android 11+ wireless debugging
+# is a user-accessible feature in Developer options.
+
+run_wifi_setup() {
+    echo ""
+    echo "═══════════════════════════════════════════════════════"
+    echo "  WiFi ADB Setup — Connect to TARGET over wireless"
+    echo "═══════════════════════════════════════════════════════"
+    echo ""
+    info "HOST: $HOM_HOST_OS"
+    info "No root is required on TARGET for WiFi ADB (Android 11+)."
+    echo ""
+
+    # Detect self-loopback scenario
+    local is_self_loopback=false
+    if [ "$HOM_HOST_OS" = "termux" ] || [ "$HOM_HOST_OS" = "android" ]; then
+        echo "  Are you connecting to:"
+        echo ""
+        echo "    1) THIS device (self-loopback — Termux connecting to its own wireless debugging)"
+        echo "    2) ANOTHER device (device-to-device over WiFi)"
+        echo ""
+        read -r -p "  Choose [1/2]: " loopback_choice
+        case "$loopback_choice" in
+            1) is_self_loopback=true ;;
+            2) is_self_loopback=false ;;
+            *) warn "Defaulting to another device."; is_self_loopback=false ;;
+        esac
+        echo ""
+    fi
+
+    if [ "$is_self_loopback" = true ]; then
+        _wifi_setup_self_loopback
+    else
+        _wifi_setup_remote
+    fi
+}
+
+# Self-loopback: Termux on the same non-rooted device
+_wifi_setup_self_loopback() {
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │  Self-loopback: Termux → same device (no root)  │"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo ""
+    echo "  This connects Termux ADB to this device's own wireless"
+    echo "  debugging port. No root is needed — wireless debugging"
+    echo "  is a standard Android 11+ feature."
+    echo ""
+    echo "  ${CLR_YELLOW}Limitations of self-loopback (no root):${CLR_RESET}"
+    echo "    • You can push files, read properties, and run non-root shell commands"
+    echo "    • You CANNOT flash boot partitions (need root DD or fastboot from another device)"
+    echo "    • You CANNOT use fastboot (device can't reboot itself to fastboot and keep the connection)"
+    echo "    • Useful for: pre-placing boot images, diagnostics, file transfer, reboot commands"
+    echo ""
+
+    echo "  Step 1: Enable wireless debugging on this device"
+    echo "    Settings → Developer options → Wireless debugging → ON"
+    echo "    (You must already have Developer options enabled)"
+    echo ""
+    read -r -p "  Press Enter when wireless debugging is enabled..."
+    echo ""
+
+    echo "  Step 2: Get the pairing code"
+    echo "    Settings → Developer options → Wireless debugging"
+    echo "    → 'Pair device with pairing code'"
+    echo "    Note the IP:PORT and the 6-digit pairing code shown."
+    echo ""
+    read -r -p "  Enter pairing IP:PORT (e.g. 127.0.0.1:37123): " pair_addr
+
+    if [ -z "$pair_addr" ]; then
+        fail "No pairing address entered."
+    fi
+
+    info "Pairing with $pair_addr..."
+    echo "  Enter the 6-digit pairing code when prompted:"
+    adb pair "$pair_addr"
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail "Pairing failed (exit code $rc). Check the IP:PORT and code."
+    fi
+    ok "Paired successfully"
+    echo ""
+
+    echo "  Step 3: Connect to this device's debugging port"
+    echo "    In Settings → Wireless debugging, note the IP:PORT under"
+    echo "    'IP address & Port' (this is different from the pairing port)."
+    echo ""
+    read -r -p "  Enter connection IP:PORT (e.g. 127.0.0.1:42456): " connect_addr
+
+    if [ -z "$connect_addr" ]; then
+        fail "No connection address entered."
+    fi
+
+    info "Connecting to $connect_addr..."
+    adb connect "$connect_addr"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        warn "adb connect returned exit code $rc — checking if device is connected anyway..."
+    fi
+
+    # Verify connection
+    if adb devices 2>/dev/null | grep -q "$connect_addr"; then
+        ok "Connected to self via wireless ADB: $connect_addr"
+        HOM_TARGET_SERIAL="$connect_addr"
+    else
+        fail "Connection failed. Ensure wireless debugging is still active."
+    fi
+
+    echo ""
+    echo "  ✓ Self-loopback established. What you can do now:"
+    echo ""
+    echo "    # Push a boot image for later use by the installer"
+    echo "    adb -s $connect_addr push boot.img /sdcard/Download/"
+    echo ""
+    echo "    # Check device properties"
+    echo "    adb -s $connect_addr shell getprop ro.product.model"
+    echo ""
+    echo "    # Reboot to recovery or bootloader (for use with a PC)"
+    echo "    adb -s $connect_addr reboot recovery"
+    echo "    adb -s $connect_addr reboot bootloader"
+    echo ""
+    echo "  ${CLR_YELLOW}To flash this device, you still need either:${CLR_RESET}"
+    echo "    • A PC with fastboot (C1/C2) — connect via USB after rebooting to bootloader"
+    echo "    • Magisk already installed (Mode A) — flash module ZIP via Magisk app"
+    echo "    • Custom recovery (Mode B) — flash ZIP via TWRP"
+    echo ""
+}
+
+# Remote: HOST connects to a separate TARGET device over WiFi
+_wifi_setup_remote() {
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────┐"
+    echo "  │  WiFi ADB: HOST → remote TARGET (no root needed)│"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo ""
+    echo "  This connects to a remote TARGET device over WiFi."
+    echo "  TARGET does NOT need root — wireless debugging is"
+    echo "  a standard Android 11+ feature."
+    echo ""
+
+    case "$HOM_HOST_OS" in
+        termux)
+            echo "  ${CLR_YELLOW}Note: HOST is Termux — device-to-device over WiFi.${CLR_RESET}"
+            echo "  Both devices must be on the same WiFi network."
+            echo "  Fastboot is NOT available over WiFi — only ADB (C3 sideload)."
+            ;;
+        linux|macos|windows)
+            echo "  HOST ($HOM_HOST_OS) and TARGET must be on the same network."
+            echo "  Fastboot is NOT available over WiFi — only ADB (C3 sideload)."
+            echo "  For C1/C2 (fastboot), connect TARGET via USB cable instead."
+            ;;
+    esac
+    echo ""
+
+    echo "  Step 1: On TARGET device — enable wireless debugging"
+    echo "    Settings → Developer options → Wireless debugging → ON"
+    echo ""
+    read -r -p "  Press Enter when wireless debugging is enabled on TARGET..."
+    echo ""
+
+    echo "  Step 2: On TARGET device — get the pairing code"
+    echo "    Settings → Developer options → Wireless debugging"
+    echo "    → 'Pair device with pairing code'"
+    echo "    Note the IP:PORT and the 6-digit pairing code."
+    echo ""
+    read -r -p "  Enter TARGET pairing IP:PORT (e.g. 192.168.1.100:37123): " pair_addr
+
+    if [ -z "$pair_addr" ]; then
+        fail "No pairing address entered."
+    fi
+
+    info "Pairing with TARGET at $pair_addr..."
+    echo "  Enter the 6-digit pairing code from TARGET when prompted:"
+    adb pair "$pair_addr"
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail "Pairing with TARGET failed (exit code $rc). Check IP:PORT and code."
+    fi
+    ok "Paired with TARGET"
+    echo ""
+
+    echo "  Step 3: Connect to TARGET's debugging port"
+    echo "    On TARGET: Wireless debugging screen shows IP:PORT under"
+    echo "    'IP address & Port' (different from the pairing port)."
+    echo ""
+    read -r -p "  Enter TARGET connection IP:PORT (e.g. 192.168.1.100:42456): " connect_addr
+
+    if [ -z "$connect_addr" ]; then
+        fail "No connection address entered."
+    fi
+
+    info "Connecting to TARGET at $connect_addr..."
+    adb connect "$connect_addr"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        warn "adb connect returned exit code $rc — checking device list..."
+    fi
+
+    # Verify and set as target
+    if adb devices 2>/dev/null | grep -q "$connect_addr"; then
+        ok "Connected to TARGET via WiFi: $connect_addr"
+        HOM_TARGET_SERIAL="$connect_addr"
+        _identify_target_adb
+        _print_target_banner
+    else
+        fail "Connection to TARGET failed. Check WiFi and wireless debugging on TARGET."
+    fi
+
+    echo ""
+    echo "  ✓ WiFi ADB connection established."
+    echo ""
+    echo "  Available Mode C options over WiFi (no root needed on TARGET):"
+    echo "    ${CLR_GREEN}✓ C3 — ADB sideload${CLR_RESET} (push ZIP or sideload to TARGET in recovery)"
+    echo "    ${CLR_YELLOW}✗ C1 — Temporary TWRP boot${CLR_RESET} (needs fastboot — USB only)"
+    echo "    ${CLR_YELLOW}✗ C2 — Direct fastboot flash${CLR_RESET} (needs fastboot — USB only)"
+    echo ""
+    echo "  What you can do now:"
+    echo "    # Push files to TARGET"
+    echo "    adb -s $connect_addr push recovery.zip /sdcard/"
+    echo ""
+    echo "    # Reboot TARGET to recovery for sideload"
+    echo "    adb -s $connect_addr reboot recovery"
+    echo ""
+    echo "    # Run the C3 sideload"
+    echo "    bash build/host_flash.sh -s $connect_addr --c3 recovery.zip"
+    echo ""
+    echo "    # Reboot TARGET to bootloader (then connect USB for fastboot)"
+    echo "    adb -s $connect_addr reboot bootloader"
+    echo ""
+
+    # Offer to continue to C3 or dump
+    echo "  What would you like to do next?"
+    echo "    1) C3 — ADB sideload"
+    echo "    2) Dump — Collect diagnostic data from TARGET"
+    echo "    3) Nothing — exit"
+    echo ""
+    read -r -p "  Choose [1/2/3]: " next_action
+    case "$next_action" in
+        1) run_c3 ;;
+        2) run_dump ;;
+        *) return 0 ;;
+    esac
+}
+
+# ── Partition / diagnostic dump ──────────────────────────────
+# Collects accessible data from TARGET over ADB. Works with and
+# without root — the script adapts to what's available.
+#
+# With root:  full partition dumps (boot, dtbo, vbmeta), live
+#             hardware data, /proc, /sys, block device reads.
+# Without root: properties, accessible /proc and /sys entries,
+#             partition layout, VINTF manifests, dumpsys output.
+#
+# The collected data can be used with the host-side pipeline:
+#   python pipeline/build_table.py --dump ./hom-dump/ --mode C
+#
+# Uses:
+#   1. Pre-flash analysis — understand TARGET before committing to flash
+#   2. Boot image extraction — root DD for later patching (with root)
+#   3. Hardware catalog — feed into the pipeline's SQLite hardware map
+#   4. Offline diagnosis — analyse a device you can't physically access
+#   5. Partition layout reference — compare across devices/OTAs
+
+run_dump() {
+    local dump_dir="${1:-./hom-dump-$(date +%Y%m%d-%H%M%S)}"
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════"
+    echo "  Diagnostic Dump — Collect data from TARGET"
+    echo "═══════════════════════════════════════════════════════"
+    echo ""
+    info "HOST ($HOM_HOST_OS) will collect diagnostic data from TARGET."
+    info "Dump directory (on HOST): $dump_dir"
+    echo ""
+
+    # Ensure we have a target
+    if ! check_device_adb; then
+        fail "No TARGET device found via ADB. Connect first (--wifi-setup or USB)."
+    fi
+
+    if [ -z "$HOM_TARGET_SERIAL" ]; then
+        _resolve_target_serial adb
+    fi
+    _identify_target_adb
+    _print_target_banner
+
+    mkdir -p "$dump_dir"
+
+    # Detect root availability on TARGET
+    local has_root=false
+    if _adb shell "su -c 'id'" 2>/dev/null | grep -q 'uid=0'; then
+        has_root=true
+        ok "TARGET has root access — full partition dumps available"
+    else
+        warn "TARGET has NO root — limited to non-root accessible data"
+        echo "    Partition image dumps (dd) require root."
+        echo "    Properties, /proc, VINTF manifests, and dumpsys are still available."
+    fi
+
+    echo ""
+    info "Collecting data from TARGET..."
+    echo ""
+
+    # ── 1. Device properties (no root needed) ────────────────
+    tgt "Collecting device properties..."
+    _adb shell getprop > "$dump_dir/getprop.txt" 2>/dev/null && \
+        ok "  getprop.txt" || warn "  getprop failed"
+
+    # ── 2. Partition layout (no root needed for listing) ─────
+    tgt "Collecting partition layout..."
+    mkdir -p "$dump_dir/partitions"
+    {
+        echo "=== /dev/block/bootdevice/by-name/ ==="
+        _adb shell "ls -la /dev/block/bootdevice/by-name/ 2>/dev/null" || true
+        echo ""
+        echo "=== /dev/block/by-name/ ==="
+        _adb shell "ls -la /dev/block/by-name/ 2>/dev/null" || true
+        echo ""
+        echo "=== /dev/block/platform/*/by-name/ ==="
+        _adb shell "ls -la /dev/block/platform/*/by-name/ 2>/dev/null" || true
+    } > "$dump_dir/partitions/layout.txt" 2>/dev/null
+    ok "  partitions/layout.txt"
+
+    # ── 3. /proc files (mostly accessible without root) ──────
+    tgt "Collecting /proc data..."
+    mkdir -p "$dump_dir/proc"
+    for f in cpuinfo meminfo cmdline version mounts filesystems; do
+        _adb shell "cat /proc/$f 2>/dev/null" > "$dump_dir/proc/$f" 2>/dev/null && \
+            ok "  proc/$f" || true
+    done
+
+    # iomem and interrupts may be restricted without root
+    _adb shell "cat /proc/iomem 2>/dev/null" > "$dump_dir/proc/iomem" 2>/dev/null || true
+    [ -s "$dump_dir/proc/iomem" ] && ok "  proc/iomem" || warn "  proc/iomem (restricted without root)"
+
+    _adb shell "cat /proc/interrupts 2>/dev/null" > "$dump_dir/proc/interrupts" 2>/dev/null || true
+    [ -s "$dump_dir/proc/interrupts" ] && ok "  proc/interrupts" || warn "  proc/interrupts (restricted without root)"
+
+    # ── 4. Device tree (readable on many devices without root)
+    tgt "Collecting device tree..."
+    mkdir -p "$dump_dir/proc/device-tree"
+    local dt_path=""
+    for try in /proc/device-tree /sys/firmware/devicetree/base; do
+        if _adb shell "test -d $try" 2>/dev/null; then
+            dt_path="$try"
+            break
+        fi
+    done
+    if [ -n "$dt_path" ]; then
+        # Pull model and compatible strings
+        _adb shell "cat $dt_path/model 2>/dev/null" > "$dump_dir/proc/device-tree/model" 2>/dev/null || true
+        _adb shell "cat $dt_path/compatible 2>/dev/null | tr '\0' '\n'" > "$dump_dir/proc/device-tree/compatible" 2>/dev/null || true
+        # List SoC nodes
+        _adb shell "ls $dt_path/soc/ 2>/dev/null" > "$dump_dir/proc/device-tree/soc_nodes.txt" 2>/dev/null || true
+        ok "  device-tree (from $dt_path)"
+    else
+        warn "  device-tree not accessible"
+    fi
+
+    # ── 5. Loaded kernel modules ─────────────────────────────
+    tgt "Collecting kernel modules..."
+    _adb shell "cat /proc/modules 2>/dev/null" > "$dump_dir/lsmod.txt" 2>/dev/null || true
+    [ -s "$dump_dir/lsmod.txt" ] && ok "  lsmod.txt" || warn "  lsmod.txt (restricted)"
+
+    # ── 6. VINTF manifests (vendor/system, no root needed) ───
+    tgt "Collecting VINTF manifests..."
+    for vintf_path in \
+        /vendor/etc/manifest.xml \
+        /vendor/etc/vintf/manifest.xml \
+        /system/etc/vintf/manifest.xml \
+        /odm/etc/vintf/manifest.xml \
+        /vendor/etc/vintf/compatibility_matrix.xml; do
+        local base_dir
+        base_dir=$(dirname "$vintf_path" | sed 's|^/||')
+        local base_name
+        base_name=$(basename "$vintf_path")
+        mkdir -p "$dump_dir/$base_dir"
+        _adb shell "cat $vintf_path 2>/dev/null" > "$dump_dir/$base_dir/$base_name" 2>/dev/null || true
+        if [ -s "$dump_dir/$base_dir/$base_name" ]; then
+            ok "  $base_dir/$base_name"
+        fi
+    done
+
+    # ── 7. dumpsys data (no root needed for many services) ───
+    tgt "Collecting dumpsys data..."
+    mkdir -p "$dump_dir/dumpsys"
+    for svc in display SurfaceFlinger audio media.camera battery; do
+        _adb shell "dumpsys $svc 2>/dev/null" > "$dump_dir/dumpsys/$svc.txt" 2>/dev/null || true
+        [ -s "$dump_dir/dumpsys/$svc.txt" ] && ok "  dumpsys/$svc" || true
+    done
+
+    # ── 8. Build and security info ───────────────────────────
+    tgt "Collecting build info..."
+    mkdir -p "$dump_dir/build"
+    {
+        echo "model=$(             _adb shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
+        echo "device=$(            _adb shell getprop ro.product.device 2>/dev/null | tr -d '\r')"
+        echo "board=$(             _adb shell getprop ro.product.board 2>/dev/null | tr -d '\r')"
+        echo "platform=$(          _adb shell getprop ro.board.platform 2>/dev/null | tr -d '\r')"
+        echo "android_version=$(   _adb shell getprop ro.build.version.release 2>/dev/null | tr -d '\r')"
+        echo "api_level=$(         _adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
+        echo "security_patch=$(    _adb shell getprop ro.build.version.security_patch 2>/dev/null | tr -d '\r')"
+        echo "build_id=$(          _adb shell getprop ro.build.display.id 2>/dev/null | tr -d '\r')"
+        echo "verified_boot=$(     _adb shell getprop ro.boot.verifiedbootstate 2>/dev/null | tr -d '\r')"
+        echo "boot_slot=$(         _adb shell getprop ro.boot.slot_suffix 2>/dev/null | tr -d '\r')"
+        echo "soc_manufacturer=$(  _adb shell getprop ro.soc.manufacturer 2>/dev/null | tr -d '\r')"
+        echo "soc_model=$(         _adb shell getprop ro.soc.model 2>/dev/null | tr -d '\r')"
+        echo "hardware=$(          _adb shell getprop ro.hardware 2>/dev/null | tr -d '\r')"
+        echo "bootloader=$(        _adb shell getprop ro.bootloader 2>/dev/null | tr -d '\r')"
+        echo "flash_locked=$(      _adb shell getprop ro.boot.flash.locked 2>/dev/null | tr -d '\r')"
+    } > "$dump_dir/build/summary.txt"
+    ok "  build/summary.txt"
+
+    # ── 9. Partition image dumps (ROOT ONLY) ─────────────────
+    if [ "$has_root" = true ]; then
+        tgt "Dumping partition images (root access available)..."
+        mkdir -p "$dump_dir/boot_images"
+
+        for part in boot init_boot dtbo vbmeta vbmeta_system; do
+            local dev=""
+            for try_dev in \
+                "/dev/block/bootdevice/by-name/$part" \
+                "/dev/block/by-name/$part"; do
+                if _adb shell "test -e $try_dev" 2>/dev/null; then
+                    dev="$try_dev"
+                    break
+                fi
+            done
+
+            if [ -n "$dev" ]; then
+                tgt "  Dumping $part from $dev..."
+                _adb shell "su -c 'dd if=$dev bs=4096 2>/dev/null'" > "$dump_dir/boot_images/$part.img" 2>/dev/null
+                local size
+                size=$(wc -c < "$dump_dir/boot_images/$part.img" 2>/dev/null || echo 0)
+                if [ "$size" -gt 0 ]; then
+                    ok "  boot_images/$part.img ($(( size / 1024 )) KB)"
+                else
+                    rm -f "$dump_dir/boot_images/$part.img"
+                    warn "  $part — dump failed or empty"
+                fi
+            fi
+        done
+
+        # If we dumped a boot image, it can be used for patching
+        if [ -f "$dump_dir/boot_images/boot.img" ] || [ -f "$dump_dir/boot_images/init_boot.img" ]; then
+            echo ""
+            ok "Boot image dumped — this can be used for Mode C2 (fastboot flash):"
+            if [ -f "$dump_dir/boot_images/init_boot.img" ]; then
+                echo "    1. Patch: transfer init_boot.img to Magisk app → Patch a File"
+                echo "    2. Flash: fastboot flash init_boot magisk_patched-*.img"
+            else
+                echo "    1. Patch: transfer boot.img to Magisk app → Patch a File"
+                echo "    2. Flash: fastboot flash boot magisk_patched-*.img"
+            fi
+        fi
+
+        # ── 10. /proc/iomem full dump (root only) ────────────
+        _adb shell "su -c 'cat /proc/iomem'" > "$dump_dir/proc/iomem_full" 2>/dev/null || true
+        [ -s "$dump_dir/proc/iomem_full" ] && ok "  proc/iomem_full (root — full detail)"
+
+        # ── 11. SELinux policy ────────────────────────────────
+        tgt "Collecting SELinux policy..."
+        mkdir -p "$dump_dir/selinux"
+        _adb shell "su -c 'cat /sys/fs/selinux/policy'" > "$dump_dir/selinux/policy.bin" 2>/dev/null || true
+        [ -s "$dump_dir/selinux/policy.bin" ] && ok "  selinux/policy.bin"
+
+    else
+        echo ""
+        info "Skipping partition image dumps (no root on TARGET)."
+        echo "    To get partition dumps, either:"
+        echo "      • Root TARGET first (Mode A or C1+sideload)"
+        echo "      • Use 'fastboot boot twrp.img' to get temporary root"
+        echo "      • Extract boot.img from TARGET's factory image on HOST"
+    fi
+
+    # ── Write manifest ────────────────────────────────────────
+    find "$dump_dir" -type f | sed "s|^$dump_dir/||" | sort > "$dump_dir/manifest.txt"
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════"
+    ok "Dump complete: $dump_dir"
+    echo "═══════════════════════════════════════════════════════"
+    echo ""
+    echo "  Files collected: $(wc -l < "$dump_dir/manifest.txt")"
+    echo "  Total size: $(du -sh "$dump_dir" 2>/dev/null | awk '{print $1}')"
+    echo ""
+    echo "  ${CLR_GREEN}What you can do with this dump:${CLR_RESET}"
+    echo ""
+    echo "  1. ${CLR_CYAN}Build a hardware map (pipeline):${CLR_RESET}"
+    echo "     python pipeline/build_table.py --dump $dump_dir --mode C"
+    echo ""
+    echo "  2. ${CLR_CYAN}Unpack boot images (if dumped):${CLR_RESET}"
+    echo "     python pipeline/unpack_images.py --dump $dump_dir --run-id 1"
+    echo "     → Extracts kernel, ramdisk, fstab, init.rc, default.prop"
+    echo ""
+    echo "  3. ${CLR_CYAN}Parse VINTF manifests:${CLR_RESET}"
+    echo "     python pipeline/parse_manifests.py --dump $dump_dir --run-id 1"
+    echo "     → HAL interfaces, board capabilities, hardware features"
+    echo ""
+    echo "  4. ${CLR_CYAN}Analyse device tree:${CLR_RESET}"
+    echo "     python pipeline/build_table.py --dump $dump_dir --mode C"
+    echo "     → SoC peripherals, regulators, display controllers"
+    echo ""
+    echo "  5. ${CLR_CYAN}Run failure analysis (pre-flash check):${CLR_RESET}"
+    echo "     python pipeline/failure_analysis.py --dump $dump_dir"
+    echo "     → Anti-rollback check, partition compatibility, known issues"
+    echo ""
+    if [ "$has_root" = true ]; then
+        echo "  6. ${CLR_CYAN}Use dumped boot image for patching:${CLR_RESET}"
+        echo "     Transfer boot.img to Magisk → Patch a File → pull back → fastboot flash"
+        echo "     See Mode C2 in docs/ADB_FASTBOOT_INSTALL.md"
+        echo ""
+    fi
+    echo "  Full pipeline docs: docs/PIPELINE.md (if available)"
+    echo ""
+}
+
 # Find the latest recovery ZIP in dist/.
 find_recovery_zip() {
     local latest=""
@@ -802,8 +1326,9 @@ show_menu() {
     printf "  HOST   : %s (%s)\n" "$HOM_HOST_OS" "$(uname -m 2>/dev/null || echo unknown)"
     printf "  TARGET : %s\n" "$target_status"
     echo ""
-    echo "  Choose a sub-path:"
+    echo "  Choose an action:"
     echo ""
+    echo "    ${CLR_GREEN}Flash / Install:${CLR_RESET}"
     echo "    1) C1 — Temporary TWRP boot (fastboot boot twrp.img)"
     echo "           Boots TWRP in RAM on TARGET, then sideload."
     echo ""
@@ -812,6 +1337,13 @@ show_menu() {
     echo ""
     echo "    3) C3 — ADB sideload (requires TWRP/OrangeFox on TARGET)"
     echo "           Sends recovery ZIP from HOST to TARGET."
+    echo ""
+    echo "    ${CLR_CYAN}Setup / Diagnostics:${CLR_RESET}"
+    echo "    4) WiFi setup — Pair and connect to TARGET over wireless ADB"
+    echo "           No root needed on TARGET (Android 11+). Also supports self-loopback."
+    echo ""
+    echo "    5) Dump — Collect diagnostic data from TARGET"
+    echo "           Works with or without root. Feeds into the pipeline."
     echo ""
 
     if [ -n "$zip" ]; then
@@ -824,11 +1356,13 @@ show_menu() {
     echo "    q) Back to main menu"
     echo ""
 
-    read -r -p "  Choose [1/2/3/q]: " choice
+    read -r -p "  Choose [1/2/3/4/5/q]: " choice
     case "$choice" in
         1) run_c1 ;;
         2) run_c2 ;;
         3) run_c3 ;;
+        4) run_wifi_setup ;;
+        5) run_dump ;;
         q|Q) return 0 ;;
         *) warn "Invalid choice"; show_menu ;;
     esac
@@ -859,16 +1393,23 @@ main() {
         --c1) shift; check_host_prereqs; run_c1 "$@" ;;
         --c2) shift; check_host_prereqs; run_c2 "$@" ;;
         --c3) shift; check_host_prereqs; run_c3 "$@" ;;
+        --wifi-setup) shift; check_host_prereqs; run_wifi_setup "$@" ;;
+        --dump) shift; check_host_prereqs; run_dump "$@" ;;
         --help|-h)
-            echo "Usage: bash build/host_flash.sh [-s SERIAL] [--c1 TWRP_IMG | --c2 PATCHED_IMG | --c3 ZIP]"
+            echo "Usage: bash build/host_flash.sh [-s SERIAL] [COMMAND]"
             echo ""
-            echo "  Flashes a TARGET device from this HOST machine."
+            echo "  Flashes, diagnoses, or dumps a TARGET device from this HOST."
             echo ""
-            echo "  -s SERIAL        Target a specific device by serial number"
-            echo "                   (required when multiple devices are connected)"
+            echo "  Commands:"
             echo "  --c1 TWRP_IMG    Temporarily boot TWRP on TARGET, then sideload"
             echo "  --c2 PATCHED_IMG Flash pre-patched boot image to TARGET via fastboot"
             echo "  --c3 ZIP         ADB sideload recovery ZIP to TARGET in TWRP"
+            echo "  --wifi-setup     Pair and connect to TARGET over wireless ADB (no root needed)"
+            echo "  --dump [DIR]     Collect diagnostic/partition data from TARGET"
+            echo ""
+            echo "  Options:"
+            echo "  -s SERIAL        Target a specific device by serial number"
+            echo "                   (required when multiple devices are connected)"
             echo ""
             echo "  No arguments: show interactive menu"
             echo ""
