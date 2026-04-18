@@ -78,7 +78,7 @@ _hom_auto_install git      git
 _hom_auto_install zip      zip
 _hom_auto_install unzip    unzip
 _hom_auto_install curl     curl
-_hom_auto_install python3  python3   python
+_hom_auto_install python3  python3   python   # Termux package is "python" but provides python3
 _hom_auto_install tar      tar
 
 # sha256sum OR shasum — at least one must be present
