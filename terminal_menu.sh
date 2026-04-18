@@ -20,6 +20,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── dependency check (runs once per session) ──────────────────
 source "$REPO_ROOT/check_deps.sh" || exit 1
 
+# ── load device environment registry (if available) ──────────
+# device_profile.sh writes HOM_DEV_* variables (build ID, boot
+# partition type, codename, etc.) to this file.  Sourcing it
+# makes that context available for display in the menu.
+_HOM_ENV_REGISTRY="/sdcard/hands-on-metal/env_registry.sh"
+load_env_registry() {
+    if [ -f "$_HOM_ENV_REGISTRY" ]; then
+        # shellcheck disable=SC1090
+        source "$_HOM_ENV_REGISTRY" 2>/dev/null || true
+    fi
+}
+load_env_registry
+
 # ── ANSI color codes ─────────────────────────────────────────
 CLR_LIGHT_GREEN=$'\033[92m'   # ready to run
 CLR_DARK_GREEN=$'\033[32m'    # already done / not needed
@@ -252,6 +265,9 @@ declare -a ITEM_STATUS=()
 declare -a MISSING_INFO=()
 
 refresh_status() {
+    # Re-source the env registry in case device_profile.sh ran mid-session
+    load_env_registry
+
     ITEM_STATUS=()
     MISSING_INFO=()
 
@@ -530,6 +546,129 @@ print_prereq_submenu() {
     esac
 }
 
+# ── Script-specific argument help ─────────────────────────────
+# Returns a description of accepted CLI arguments for a given
+# script, or empty if the script takes no arguments.
+# Also returns whether the script accepts arguments at all.
+script_arguments_help() {
+    local rel="$1"
+    case "$rel" in
+        build/build_offline_zip.sh)
+            echo "Accepted arguments:"
+            echo "  --version <version>   Override module version (default: from module.prop)"
+            echo "  --no-tools            Skip tool validation"
+            echo ""
+            echo "Example:  --version 2.1.0"
+            ;;
+        build/fetch_all_deps.sh)
+            echo "Accepted arguments:"
+            echo "  --magisk-version <ver>   Magisk release to fetch  (default: v30.7)"
+            echo "  --busybox-version <ver>  BusyBox release to fetch (default: 1.31.0)"
+            echo "  --version <ver>          Override module version"
+            echo "  --skip-binaries          Skip binary downloads (repo + ZIPs only)"
+            echo ""
+            echo "Example:  --magisk-version v30.8 --version 2.1.0"
+            ;;
+        *)
+            ;;
+    esac
+}
+
+# Returns "true" if the script accepts CLI arguments, "false" otherwise.
+script_accepts_args() {
+    local rel="$1"
+    case "$rel" in
+        build/build_offline_zip.sh|build/fetch_all_deps.sh) echo "true" ;;
+        *) echo "false" ;;
+    esac
+}
+
+# ── Boot image context display ────────────────────────────────
+# For scripts that deal with boot images, display current device
+# context so the user knows what the script will look for.
+show_boot_image_context() {
+    local rel="$1"
+
+    # Only relevant for boot-image-related scripts
+    case "$rel" in
+        core/boot_image.sh|core/magisk_patch.sh|core/flash.sh|core/anti_rollback.sh)
+            ;;
+        *)
+            return
+            ;;
+    esac
+
+    # Reload env registry for freshest device info
+    load_env_registry
+
+    local boot_part="${HOM_DEV_BOOT_PART:-}"
+    local build_id="${HOM_DEV_BUILD_ID:-}"
+    local codename="${HOM_DEV_DEVICE:-}"
+    local model="${HOM_DEV_MODEL:-}"
+    local android_ver="${HOM_DEV_ANDROID_VER:-}"
+    local sdk_int="${HOM_DEV_SDK_INT:-}"
+
+    # Only show context if device profile info is available
+    if [ -z "$boot_part" ] && [ -z "$codename" ]; then
+        return
+    fi
+
+    echo ""
+    echo "  ─── Device context ───────────────────────────────"
+
+    if [ -n "$model" ]; then
+        echo "  Device        : ${HOM_DEV_BRAND:-} $model ($codename)"
+    elif [ -n "$codename" ]; then
+        echo "  Device        : $codename"
+    fi
+
+    if [ -n "$android_ver" ] && [ -n "$sdk_int" ]; then
+        echo "  Android       : $android_ver (API $sdk_int)"
+    fi
+
+    if [ -n "$build_id" ]; then
+        echo "  Build ID      : $build_id"
+    fi
+
+    if [ -n "$boot_part" ]; then
+        if [ "$boot_part" = "init_boot" ]; then
+            echo "  Patch target  : ${CLR_LIGHT_GREEN}init_boot${CLR_RESET} (Android 13+ / API 33+)"
+            echo "  Expected file : init_boot.img"
+        else
+            echo "  Patch target  : ${CLR_LIGHT_GREEN}boot${CLR_RESET} (standard boot partition)"
+            echo "  Expected file : boot.img"
+        fi
+    fi
+
+    # Show factory image source info for boot_image.sh
+    if [ "$rel" = "core/boot_image.sh" ]; then
+        echo ""
+        echo "  ─── Image acquisition strategy ─────────────────"
+        echo "  The script will try these sources in order:"
+        echo "    1) Root DD copy from live partition (requires root)"
+        echo "    2) Pre-placed file scan: /sdcard/Download/${boot_part:-boot}.img"
+        if [ -n "$codename" ] && [ -f "$REPO_ROOT/build/partition_index.json" ] \
+            && grep -q "\"${codename}\"" "$REPO_ROOT/build/partition_index.json" 2>/dev/null; then
+            local bid_lower=""
+            [ -n "$build_id" ] && bid_lower=$(echo "$build_id" | tr 'A-Z' 'a-z')
+            echo "    3) Google factory image download (Pixel detected)"
+            if [ -n "$bid_lower" ]; then
+                echo "       wget URL: https://dl.google.com/dl/android/aosp/${codename}-${bid_lower}-factory.zip"
+            else
+                echo "       wget URL: https://dl.google.com/dl/android/aosp/${codename}-{build_id}-factory.zip"
+                echo "       (build ID not yet detected — run device_profile.sh first)"
+            fi
+        fi
+        echo "    4) Manual path prompt (final fallback)"
+        echo ""
+        echo "  NOTE: Common filenames like boot.img, init_boot.img, magisk_patched.img,"
+        echo "  magisk.zip, or other names will be recognized if placed in /sdcard/Download/."
+        echo "  The file must contain a valid Android boot image (ANDROID! magic header)."
+    fi
+
+    echo "  ─────────────────────────────────────────────────"
+}
+
 # ── Run a selected script ────────────────────────────────────
 run_selected() {
     local idx="$1"
@@ -540,8 +679,22 @@ run_selected() {
 
     echo
     echo "Selected: $rel"
-    echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
-    read -r -a args_array -p "Arguments (optional): "
+
+    # Show script-specific argument help or boot image context
+    local help_text
+    help_text="$(script_arguments_help "$rel")"
+    local accepts_args
+    accepts_args="$(script_accepts_args "$rel")"
+
+    if [ "$accepts_args" = "true" ]; then
+        echo ""
+        echo "$help_text"
+        echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
+        read -r -a args_array -p "Arguments (optional): "
+    else
+        echo "This script does not accept command-line arguments."
+        show_boot_image_context "$rel"
+    fi
 
     echo
     echo "Running..."
