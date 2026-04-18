@@ -20,6 +20,7 @@
 
 # Skip if already checked in this session (e.g. menu already ran it)
 if [ "${HOM_DEPS_CHECKED:-}" = "1" ]; then
+    # shellcheck disable=SC2317  # exit is reachable when this script is executed (not sourced)
     return 0 2>/dev/null || exit 0
 fi
 
@@ -112,6 +113,7 @@ if [ "$_hom_dep_ok" = false ]; then
     echo "ERROR: One or more required tools are missing. Install them and try again." >&2
     echo ""
     unset _hom_dep_ok _hom_require _hom_optional _hom_env_type
+    # shellcheck disable=SC2317  # exit is reachable when this script is executed (not sourced)
     return 1 2>/dev/null || exit 1
 fi
 

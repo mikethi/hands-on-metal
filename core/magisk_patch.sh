@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/magisk_patch.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Magisk boot image patch orchestration.
 #

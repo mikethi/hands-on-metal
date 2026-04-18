@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/logging.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Shared logging framework for hands-on-metal scripts.
 # Source this file from every script that needs logging.

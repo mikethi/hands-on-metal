@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/boot_image.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Guided boot/init_boot image acquisition and validation.
 #
@@ -479,7 +480,7 @@ _download_factory_boot_image() {
     fi
 
     local build_id_lower
-    build_id_lower=$(echo "$build_id" | tr 'A-Z' 'a-z')
+    build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
 
     local factory_url="https://dl.google.com/dl/android/aosp/${codename}-${build_id_lower}-factory.zip"
     local factory_zip="$_TMP/hom_factory_${codename}_${build_id_lower}.zip"
@@ -548,7 +549,8 @@ _download_factory_boot_image() {
         return 1
     }
 
-    local inner_zip_path="$extract_dir/$(basename "$inner_zip")"
+    local inner_zip_path
+    inner_zip_path="$extract_dir/$(basename "$inner_zip")"
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
     if unzip -jo "$inner_zip_path" "${boot_part}.img" \
@@ -627,7 +629,7 @@ run_boot_image_acquire() {
         log_info "Running as root (uid 0) — attempting block device acquisition"
         ux_print "  Root access detected — trying live partition copy..."
 
-        boot_dev=$(_reg_get "HOM_DEV_$(echo "$boot_part" | tr 'a-z' 'A-Z' | tr '-' '_')_DEV")
+        boot_dev=$(_reg_get "HOM_DEV_$(echo "$boot_part" | tr '[:lower:]' '[:upper:]' | tr '-' '_')_DEV")
 
         # Cross-check the stored path is actually a block device
         if [ -n "$boot_dev" ] && [ -b "$boot_dev" ]; then
@@ -720,7 +722,7 @@ run_boot_image_acquire() {
                 # Classify the source for logging
                 case "$pre_placed" in
                     /data/adb/magisk/*)  acquire_method="magisk_stock_backup" ;;
-                    *TWRP*|*Fox*|*OrangeFox*|*PBRP*|*SHRP*|*RedWolf*)
+                    *TWRP*|*Fox*|*PBRP*|*SHRP*|*RedWolf*)
                                          acquire_method="recovery_backup" ;;
                     *clockworkmod*|*nandroid*)
                                          acquire_method="nandroid_backup" ;;
@@ -853,7 +855,7 @@ run_boot_image_acquire() {
 
     if [ -z "$acquire_method" ]; then
         local manufacturer
-        manufacturer=$(getprop ro.product.manufacturer 2>/dev/null | tr 'A-Z' 'a-z' || true)
+        manufacturer=$(getprop ro.product.manufacturer 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
 
         if [ -n "$manufacturer" ]; then
             ux_print ""

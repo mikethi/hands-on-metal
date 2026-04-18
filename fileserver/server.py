@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import argparse
 import html
+import mimetypes
 import os
 import re
+import secrets
 import sys
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -40,6 +42,10 @@ from urllib.parse import unquote, quote
 
 # Maximum upload size: 500 MB (configurable via --max-upload)
 _DEFAULT_MAX_UPLOAD = 500 * 1024 * 1024
+
+# Streaming download chunk size — large enough to amortise syscalls but small
+# enough to keep memory bounded for multi-GB files.
+_STREAM_CHUNK = 64 * 1024
 
 
 # ── Multipart form-data parser (replaces deprecated cgi module) ──────────────
@@ -96,11 +102,55 @@ class FileServerHandler(BaseHTTPRequestHandler):
     # Set by ``serve()`` before the server starts.
     storage_dir: Path = Path("files")
     max_upload: int = _DEFAULT_MAX_UPLOAD
+    auth_token: str | None = None  # if set, required on every request
+
+    # ── auth ─────────────────────────────────────────────────
+
+    def _check_auth(self) -> bool:
+        """Return True if the request is authorised (or auth is disabled).
+
+        When a token is configured, it may be supplied via either:
+          * Authorization: Bearer <token>
+          * ?token=<token> query string
+        """
+        if not self.auth_token:
+            return True
+
+        # Header check
+        header = self.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            supplied = header[len("Bearer "):].strip()
+            if secrets.compare_digest(supplied, self.auth_token):
+                return True
+
+        # Query-string check (handy for curl/wget without custom headers)
+        if "?" in self.path:
+            query = self.path.split("?", 1)[1]
+            for part in query.split("&"):
+                if part.startswith("token="):
+                    supplied = unquote(part[len("token="):])
+                    if secrets.compare_digest(supplied, self.auth_token):
+                        return True
+
+        return False
+
+    @staticmethod
+    def _strip_query(path: str) -> str:
+        """Return the path with any query string removed."""
+        return path.split("?", 1)[0]
 
     # ── GET — download a file or list the directory ──────────
 
     def do_GET(self) -> None:  # noqa: N802
-        rel = unquote(self.path).lstrip("/")
+        if not self._check_auth():
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Bearer realm="hands-on-metal"')
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"401 Unauthorized\n")
+            return
+
+        rel = unquote(self._strip_query(self.path)).lstrip("/")
 
         # Reject path-traversal attempts
         try:
@@ -122,7 +172,15 @@ class FileServerHandler(BaseHTTPRequestHandler):
     # ── POST /upload — accept a file upload ──────────────────
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path.rstrip("/") != "/upload":
+        if not self._check_auth():
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Bearer realm="hands-on-metal"')
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"401 Unauthorized\n")
+            return
+
+        if self._strip_query(self.path).rstrip("/") != "/upload":
             self._send_error(404, "POST only accepted at /upload")
             return
 
@@ -188,20 +246,33 @@ class FileServerHandler(BaseHTTPRequestHandler):
 
     def _serve_file(self, path: Path) -> None:
         try:
-            data = path.read_bytes()
+            size = path.stat().st_size
+            fh = path.open("rb")
         except OSError as exc:
             self._send_error(500, f"Read error: {exc}")
             return
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header(
-            "Content-Disposition",
-            f'attachment; filename="{path.name}"',
-        )
-        self.end_headers()
-        self.wfile.write(data)
+        # Detect Content-Type by extension; fall back to binary
+        content_type, _ = mimetypes.guess_type(path.name)
+        if not content_type:
+            content_type = "application/octet-stream"
+
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(size))
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="{path.name}"',
+            )
+            self.end_headers()
+            while True:
+                chunk = fh.read(_STREAM_CHUNK)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        finally:
+            fh.close()
 
     def _serve_listing(self, directory: Path, rel: str) -> None:
         try:
@@ -288,6 +359,7 @@ def serve(
     port: int = 8080,
     directory: str = "files",
     max_upload: int = _DEFAULT_MAX_UPLOAD,
+    auth_token: str | None = None,
 ) -> None:
     """Start the file server."""
     storage = Path(directory).resolve()
@@ -295,12 +367,21 @@ def serve(
 
     FileServerHandler.storage_dir = storage
     FileServerHandler.max_upload = max_upload
+    FileServerHandler.auth_token = auth_token
 
     server = HTTPServer((host, port), FileServerHandler)
+    auth_line = (
+        f"  Auth token        : {auth_token}\n"
+        f"                       (send via 'Authorization: Bearer <token>' "
+        f"or '?token=<token>')\n"
+        if auth_token
+        else "  Auth              : disabled (anyone on the network can read/write)\n"
+    )
     print(
         f"hands-on-metal file server listening on http://{host}:{port}\n"
         f"  Storage directory : {storage}\n"
         f"  Max upload size   : {max_upload // (1024 * 1024)} MB\n"
+        f"{auth_line}"
         f"\n"
         f"  Download : curl  http://{host}:{port}/<filename> -o <filename>\n"
         f"             wget  http://{host}:{port}/<filename>\n"
@@ -347,13 +428,37 @@ def main() -> None:
         default=_DEFAULT_MAX_UPLOAD,
         help="Maximum upload size in bytes (default: 500 MB)",
     )
+    ap.add_argument(
+        "--token",
+        default=os.environ.get("HOM_FILESERVER_TOKEN"),
+        help=(
+            "Require this bearer token on every request. "
+            "May also be set via the HOM_FILESERVER_TOKEN env var. "
+            "Mutually exclusive with --auto-token."
+        ),
+    )
+    ap.add_argument(
+        "--auto-token",
+        action="store_true",
+        help=(
+            "Generate a fresh random token at startup and print it. "
+            "Useful for ad-hoc transfers when you don't want to pick one."
+        ),
+    )
     args = ap.parse_args()
+
+    token = args.token
+    if args.auto_token:
+        if token:
+            ap.error("--token and --auto-token are mutually exclusive")
+        token = secrets.token_urlsafe(24)
 
     serve(
         host=args.host,
         port=args.port,
         directory=args.dir,
         max_upload=args.max_upload,
+        auth_token=token,
     )
 
 

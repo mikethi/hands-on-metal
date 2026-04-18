@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/candidate_entry.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Auto-create a candidate device/version entry when the current
 # device is not found in the partition_index.json database.
@@ -40,9 +41,9 @@ _reg_set() {
 }
 
 _json_str() {
-    # Escape a string for JSON output
-    local s="$1"
-    printf '%s' "$s" | sed 's/\\/\\\\/g;s/"/\\"/g;s/	/\\t/g'
+    # Escape stdin for JSON output. Reads from stdin so callers can pipe in,
+    # e.g.  printf '%s' "$x" | _json_str
+    sed 's/\\/\\\\/g;s/"/\\"/g;s/	/\\t/g'
 }
 
 # ── family matching ───────────────────────────────────────────
@@ -78,9 +79,9 @@ _match_family() {
             local prefix
             prefix=$(printf '%s' "$line" | sed 's/.*"\([a-z]*\)".*/\1/')
             local plat_lower
-            plat_lower=$(printf '%s' "$platform" | tr 'A-Z' 'a-z')
+            plat_lower=$(printf '%s' "$platform" | tr '[:upper:]' '[:lower:]')
             local mfr_lower
-            mfr_lower=$(printf '%s' "$soc_mfr" | tr 'A-Z' 'a-z')
+            mfr_lower=$(printf '%s' "$soc_mfr" | tr '[:upper:]' '[:lower:]')
             case "$plat_lower" in
                 "$prefix"*) family_name="$in_family"; break ;;
             esac
@@ -233,6 +234,7 @@ update_candidate_result() {
 
     # Find the most recent candidate file for this RUN_ID
     local cfile
+    # shellcheck disable=SC2012  # ls -t for newest is simpler than find here; controlled paths
     cfile=$(ls -t "$CANDIDATE_DIR"/*_"${RUN_ID}".json 2>/dev/null | head -1)
     [ -f "$cfile" ] || return 0
 

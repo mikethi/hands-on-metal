@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # magisk-module/setup_termux.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Hands-on-metal — Conditional Termux Bootstrap
 # Called by service.sh after env_detect.sh.
@@ -155,9 +156,11 @@ if [ -z "$TERMUX_DATA_DIR" ]; then
 
     if [ -n "$TERMUX_APK" ]; then
         log "Installing Termux from $TERMUX_APK ..."
-        pm install -r "$TERMUX_APK" >> "$LOG" 2>&1 && \
-            log "pm install succeeded" || \
+        if pm install -r "$TERMUX_APK" >> "$LOG" 2>&1; then
+            log "pm install succeeded"
+        else
             log "pm install failed — Termux setup will be incomplete"
+        fi
     else
         log "No Termux APK found at $OUT/termux.apk or /sdcard/Download/termux*.apk"
         log "Drop a Termux APK (F-Droid build) to $OUT/termux.apk and rerun"

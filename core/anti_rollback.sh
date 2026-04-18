@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/anti_rollback.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Anti-rollback protection guard.
 #
@@ -92,7 +93,7 @@ _extract_img_spl() {
 _read_avb_rollback_index() {
     # Prefer /proc/avb_rollback_index if present (some kernels expose it)
     if [ -r /proc/avb_rollback_index ]; then
-        cat /proc/avb_rollback_index 2>/dev/null | head -1
+        head -1 < /proc/avb_rollback_index 2>/dev/null
         return
     fi
     # Fallback: read the Magisk-exposed rollback index file

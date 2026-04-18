@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/device_profile.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Device profiling — equivalent of Treble Check + environment
 # detection in one unified pass.

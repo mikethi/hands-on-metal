@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/share.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Write a local shareable bundle of non-PII hardware/install
 # variables to /sdcard/hands-on-metal/share/<RUN_ID>/.
@@ -110,13 +111,15 @@ run_share() {
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     # Collect all non-PII vars from registry into JSON
-    printf '{\n' > "$bundle_out"
-    printf '  "schema_version": "1.0",\n' >> "$bundle_out"
-    printf '  "run_id": "%s",\n' "$(_json_str "${RUN_ID:-}")" >> "$bundle_out"
-    printf '  "generated_at": "%s",\n' "$ts" >> "$bundle_out"
-    printf '  "pii_redacted": true,\n' >> "$bundle_out"
-    printf '  "sharing_mode": "local_anonymous",\n' >> "$bundle_out"
-    printf '  "variables": {\n' >> "$bundle_out"
+    {
+        printf '{\n'
+        printf '  "schema_version": "1.0",\n'
+        printf '  "run_id": "%s",\n' "$(_json_str "${RUN_ID:-}")"
+        printf '  "generated_at": "%s",\n' "$ts"
+        printf '  "pii_redacted": true,\n'
+        printf '  "sharing_mode": "local_anonymous",\n'
+        printf '  "variables": {\n'
+    } > "$bundle_out"
 
     local first_var=1
     while IFS= read -r line; do
@@ -149,8 +152,10 @@ run_share() {
                 "$(_json_str "$mstatus")" "$(_json_str "$mnote")" >> "$bundle_out"
         done < "$manifest_src"
     fi
-    printf '\n  ]\n' >> "$bundle_out"
-    printf '}\n' >> "$bundle_out"
+    {
+        printf '\n  ]\n'
+        printf '}\n'
+    } >> "$bundle_out"
 
     # ── 5. Write README ───────────────────────────────────────
     cat > "$SHARE_DIR/README.txt" << READMEEOF

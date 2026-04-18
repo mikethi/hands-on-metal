@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # magisk-module/collect.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Hands-on-metal — Hardware Data Collection (root-adaptive)
 # Collects all hardware-relevant data READ-ONLY into
@@ -459,7 +460,7 @@ if [ "$_HOM_IS_ROOT" = true ]; then
     done
     # Glob fallback for platform-specific paths
     if [ -z "$BOOT_DEV" ]; then
-        for g in /dev/block/platform/*/by-name/$boot_part; do
+        for g in /dev/block/platform/*/by-name/"$boot_part"; do
             [ -b "$g" ] && { BOOT_DEV="$g"; break; }
         done
     fi
@@ -489,7 +490,7 @@ for named in "$OUT/getprop.txt" "$OUT/lshal.txt" "$OUT/dmesg.txt" \
              "$OUT/lsmod.txt" "$OUT/board_summary.txt" \
              "$OUT/encryption_state.txt"; do
     [ -f "$named" ] || continue
-    key="HOM_ARTEFACT_$(basename "$named" | tr '.' '_' | tr 'a-z' 'A-Z')"
+    key="HOM_ARTEFACT_$(basename "$named" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
     reg_set path "$key" "$(real_abs "$named")"
 done
 

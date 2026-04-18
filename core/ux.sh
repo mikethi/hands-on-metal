@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/ux.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # User-experience helpers — printing, prompting, instructions.
 # Works in three contexts:

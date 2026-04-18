@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/flash.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Flash execution — writes the patched image to the device.
 #

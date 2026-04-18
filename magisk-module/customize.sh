@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # magisk-module/customize.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Magisk module customization hook.
 # Sourced by the update-binary installer after module files are
@@ -68,6 +69,7 @@ if ! sm_require "ENV_DETECTED" 2>/dev/null; then
         "Probes shell, Python, Termux, available tools, SELinux context, and key paths" \
         "Ensures all prerequisites are present before running collection or patching scripts"
 
+    # shellcheck disable=SC1091  # source path is dynamic at install time
     SCRIPT_NAME="env_detect" . "$MODPATH/env_detect.sh" || \
         ux_abort "Environment detection failed — check $LOG_DIR for details"
 

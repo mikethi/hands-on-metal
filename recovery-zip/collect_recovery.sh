@@ -1,5 +1,6 @@
 #!/sbin/sh
 # recovery-zip/collect_recovery.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Hands-on-metal — Mode B: Recovery Hardware Variable Collection
 # Runs inside TWRP / OrangeFox via the META-INF updater-script.
@@ -108,8 +109,8 @@ find_block() {
         "/dev/block/by-name/$name"; do
         [ -b "$try" ] && { echo "$try"; return 0; }
     done
-    for g in /dev/block/platform/*/by-name/$name \
-             /dev/block/platform/*/*/by-name/$name; do
+    for g in /dev/block/platform/*/by-name/"$name" \
+             /dev/block/platform/*/*/by-name/"$name"; do
         [ -b "$g" ] && { echo "$g"; return 0; }
     done
     return 1
@@ -193,7 +194,7 @@ for bprop in \
             ro.product.cpu.abi|ro.product.cpu.abilist|\
             ro.kernel.version|ro.build.version.release|\
             ro.crypto.state|ro.crypto.type)
-                ENV_KEY="HOM_PROP_$(echo "$k" | tr '.' '_' | tr 'a-z' 'A-Z')"
+                ENV_KEY="HOM_PROP_$(echo "$k" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
                 reg_set recovery "$ENV_KEY" "$v"
                 ;;
         esac
@@ -209,7 +210,7 @@ for search_root in "$SYS_MNT" "$VENDOR_MNT" "$ODM_MNT" /system /vendor /odm \
     find "$search_root" -name "fstab*" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
         # Record each fstab as an env var
-        ENV_KEY="HOM_FSTAB_$(basename "$f" | tr '.' '_' | tr 'a-z' 'A-Z')_PATH"
+        ENV_KEY="HOM_FSTAB_$(basename "$f" | tr '.' '_' | tr '[:lower:]' '[:upper:]')_PATH"
         reg_set_path recovery "$ENV_KEY" "$f"
     done
 done
@@ -223,10 +224,10 @@ copy_dir /proc/device-tree
 reg_set_path recovery HOM_PROC_DEVICE_TREE "/proc/device-tree"
 
 # Extract compatible string (root of the hardware identity)
-COMPAT=$(cat /proc/device-tree/compatible 2>/dev/null | tr '\0' '\n' | head -1 || true)
+COMPAT=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -1 || true)
 [ -n "$COMPAT" ] && reg_set recovery HOM_DT_COMPATIBLE "$COMPAT"
 
-MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr '\0' ' ' || true)
+MODEL=$(tr '\0' ' ' < /proc/device-tree/model 2>/dev/null || true)
 [ -n "$MODEL" ] && reg_set recovery HOM_DT_MODEL "$MODEL"
 
 # ── 6. dtbo.img raw image (for offline dtc decompilation) ────
@@ -249,7 +250,7 @@ for search_root in "$VENDOR_MNT" "$ODM_MNT" /vendor /odm; do
     [ -d "$search_root" ] || continue
     find "$search_root" -name "*.pb" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
-        key="HOM_PB_$(echo "$f" | sed 's|[/.]|_|g' | tr 'a-z' 'A-Z')"
+        key="HOM_PB_$(echo "$f" | sed 's|[/.]|_|g' | tr '[:lower:]' '[:upper:]')"
         reg_set_path recovery "$key" "$f"
     done
 done
@@ -292,7 +293,7 @@ for prop in ro.crypto.state ro.crypto.type \
             vold.decrypt; do
     v=$(getprop "$prop" 2>/dev/null || true)
     [ -n "$v" ] || continue
-    key="HOM_RECOVERY_$(echo "$prop" | tr '.' '_' | tr 'a-z' 'A-Z')"
+    key="HOM_RECOVERY_$(echo "$prop" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
     reg_set crypto "$key" "$v"
 done
 
