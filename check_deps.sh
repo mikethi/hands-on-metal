@@ -113,7 +113,7 @@ _hom_fetch_magisk() {
 
     local version="${HOM_MAGISK_VERSION:-v30.7}"
     local url="https://github.com/topjohnwu/Magisk/releases/download/${version}/Magisk-${version}.apk"
-    local tmp="${TMPDIR:-/tmp}"
+    local tmp="${TMPDIR:-${HOME:-.}/tmp}"
     local apk="$tmp/hands-on-metal-magisk-${version}.apk"
 
     mkdir -p "$tools_dir" "$tmp"

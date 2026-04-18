@@ -83,8 +83,8 @@ else
     PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_SCRIPT_RESOLVED_ROOT/build/partition_index.json}"
 fi
 
-# Portable temp directory (Termux sets $TMPDIR; /tmp may not exist)
-_TMP="${TMPDIR:-/tmp}"
+# Portable temp directory (Termux sets $TMPDIR; fallback is $HOME/tmp)
+_TMP="${TMPDIR:-${HOME:-.}/tmp}"
 
 # ── helpers ───────────────────────────────────────────────────
 

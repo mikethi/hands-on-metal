@@ -179,14 +179,14 @@ Paste the contents of share_bundle.json into a GitHub Issue:
   https://github.com/mikethi/hands-on-metal/issues/new
 
 Or use the pipeline to parse and analyze locally:
-  python pipeline/parse_logs.py --log $OUT/logs/ --out /tmp/parsed.json
-  python pipeline/failure_analysis.py --parsed /tmp/parsed.json --out /tmp/analysis.json
+  python pipeline/parse_logs.py --log $OUT/logs/ --out ~/tmp/parsed.json
+  python pipeline/failure_analysis.py --parsed ~/tmp/parsed.json --out ~/tmp/analysis.json
 
 Authenticated upload (opt-in):
   export GITHUB_TOKEN=ghp_...
   python pipeline/upload.py --logs $SHARE_DIR --token "\$GITHUB_TOKEN"
   python pipeline/github_notify.py --repo mikethi/hands-on-metal \\
-      --analysis /tmp/analysis.json --run-id ${RUN_ID:-unknown}
+      --analysis ~/tmp/analysis.json --run-id ${RUN_ID:-unknown}
 
 Your data
 ---------

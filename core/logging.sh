@@ -122,7 +122,9 @@ log_exec() {
     log_info "EXEC[$step] running: $*"
 
     local tmp_out
-    tmp_out=$(mktemp 2>/dev/null || echo "/tmp/_hom_exec_$$")
+    local fallback_tmp="${TMPDIR:-${HOME:-.}/tmp}"
+    mkdir -p "$fallback_tmp" 2>/dev/null || true
+    tmp_out=$(mktemp 2>/dev/null || echo "$fallback_tmp/_hom_exec_$$")
 
     "$@" > "$tmp_out" 2>&1
     local rc=$?
