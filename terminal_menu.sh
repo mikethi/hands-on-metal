@@ -420,7 +420,7 @@ refresh_status() {
     # the menu — but they do persist these vars to env_registry.sh.
     # Sourcing it here lets is_already_done / check_prereq see the state
     # set by previously-run scripts (e.g. HOM_DEV_MODEL after option 4).
-    local _reg="${ENV_REGISTRY:-/sdcard/hands-on-metal/env_registry.sh}"
+    local _reg="${ENV_REGISTRY:-${OUT:-/sdcard/hands-on-metal}/env_registry.sh}"
     if [ -f "$_reg" ]; then
         # shellcheck source=/dev/null
         . "$_reg" 2>/dev/null || true
