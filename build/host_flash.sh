@@ -34,6 +34,31 @@ set -eu
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/build/dist"
 
+# ── Host OS detection ─────────────────────────────────────────
+# Detect the host platform so commands, paths, and instructions
+# are tailored to the system this script is running on.
+
+_detect_host_os() {
+    local os_name
+    os_name="$(uname -s 2>/dev/null || echo unknown)"
+    case "$os_name" in
+        Linux*)
+            if [ -d "/data/data/com.termux/files/usr" ] || [ -n "${TERMUX_VERSION:-}" ]; then
+                HOM_HOST_OS="termux"
+            elif [ -n "$(getprop ro.build.display.id 2>/dev/null || true)" ]; then
+                HOM_HOST_OS="android"
+            else
+                HOM_HOST_OS="linux"
+            fi
+            ;;
+        Darwin*)  HOM_HOST_OS="macos" ;;
+        MINGW*|MSYS*|CYGWIN*)  HOM_HOST_OS="windows" ;;
+        *)        HOM_HOST_OS="unknown" ;;
+    esac
+}
+
+_detect_host_os
+
 # ── Colors ────────────────────────────────────────────────────
 CLR_GREEN=$'\033[92m'
 CLR_YELLOW=$'\033[33m'
@@ -51,10 +76,90 @@ warn()  { printf "%s  ⚠  %s%s\n" "$CLR_YELLOW" "$1" "$CLR_RESET"; }
 fail()  { printf "%s  ✗  %s%s\n" "$CLR_RED"    "$1" "$CLR_RESET" >&2; exit 1; }
 ok()    { printf "%s  ✓  %s%s\n" "$CLR_GREEN"  "$1" "$CLR_RESET"; }
 
-# ── Prerequisite checks ──────────────────────────────────────
+# ── Prerequisite checks (OS-tailored) ─────────────────────────
+
+# Print the correct install instructions for this host OS.
+_install_instructions() {
+    case "$HOM_HOST_OS" in
+        linux)
+            echo "  Install Android Platform Tools:"
+            if command -v apt-get >/dev/null 2>&1; then
+                echo "    sudo apt-get install android-tools-adb android-tools-fastboot"
+            elif command -v dnf >/dev/null 2>&1; then
+                echo "    sudo dnf install android-tools"
+            elif command -v pacman >/dev/null 2>&1; then
+                echo "    sudo pacman -S android-tools"
+            else
+                echo "    Download from https://developer.android.com/tools/releases/platform-tools"
+                echo "    Extract and add the directory to your PATH."
+            fi
+            echo ""
+            echo "  USB permissions (if 'no permissions' error):"
+            echo "    sudo usermod -aG plugdev \$USER"
+            echo "    # Then add a udev rule or install android-udev-rules:"
+            echo "    sudo apt-get install android-sdk-platform-tools-common  # includes udev rules"
+            echo "    # Log out and back in for group changes to take effect."
+            ;;
+        macos)
+            echo "  Install Android Platform Tools:"
+            if command -v brew >/dev/null 2>&1; then
+                echo "    brew install android-platform-tools"
+            else
+                echo "    Install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+                echo "    Then: brew install android-platform-tools"
+            fi
+            echo ""
+            echo "  Note: macOS may prompt 'Allow accessory to connect' — click Allow."
+            echo "  If adb/fastboot is not found after install, restart your terminal."
+            ;;
+        windows)
+            echo "  Install Android Platform Tools:"
+            echo "    1. Download from https://developer.android.com/tools/releases/platform-tools"
+            echo "    2. Extract the ZIP (e.g. to C:\\platform-tools)"
+            echo "    3. Add the folder to your system PATH:"
+            echo "       Settings → System → About → Advanced → Environment Variables → Path → Edit → New"
+            echo "    4. Install your device's USB driver (Google USB Driver or OEM driver)"
+            echo "       https://developer.android.com/studio/run/oem-usb"
+            echo ""
+            echo "  If using Git Bash/MSYS2, run this script from there."
+            echo "  If using PowerShell/CMD, use .\\adb.exe and .\\fastboot.exe instead."
+            ;;
+        termux)
+            echo "  Install Android Platform Tools in Termux:"
+            echo "    pkg install android-tools"
+            echo ""
+            echo "  Note: ADB in Termux requires either:"
+            echo "    a) Wireless debugging (Android 11+): Settings → Developer options → Wireless debugging"
+            echo "       adb pair <ip>:<pair_port>    # enter the pairing code"
+            echo "       adb connect <ip>:<port>"
+            echo "    b) USB OTG cable connecting another device"
+            echo ""
+            echo "  Fastboot from Termux requires USB OTG — wireless does not support fastboot."
+            ;;
+        android)
+            echo "  ADB is not typically available in native Android shell."
+            echo "  Install Termux from F-Droid and use Termux instead,"
+            echo "  or run this script from a PC connected to the device."
+            ;;
+        *)
+            echo "  Install Android Platform Tools from:"
+            echo "    https://developer.android.com/tools/releases/platform-tools"
+            ;;
+    esac
+}
 
 check_host_prereqs() {
     local missing=""
+
+    info "Host OS detected: $HOM_HOST_OS"
+
+    # Termux/Android: warn about limitations
+    if [ "$HOM_HOST_OS" = "termux" ]; then
+        warn "Running from Termux — fastboot requires USB OTG; ADB requires wireless debugging or OTG."
+    elif [ "$HOM_HOST_OS" = "android" ]; then
+        warn "Running from native Android shell — limited ADB/fastboot support."
+        echo "  Consider using a PC or Termux instead."
+    fi
 
     if ! command -v adb >/dev/null 2>&1; then
         missing="${missing}adb "
@@ -64,14 +169,26 @@ check_host_prereqs() {
     fi
 
     if [ -n "$missing" ]; then
-        fail "Missing required host tools: ${missing}
-  Install Android Platform Tools:
-    Linux:   sudo apt-get install android-tools-adb android-tools-fastboot
-    macOS:   brew install android-platform-tools
-    Windows: https://developer.android.com/tools/releases/platform-tools"
+        echo ""
+        echo "  ${CLR_RED}✗  Missing required tools: ${missing}${CLR_RESET}" >&2
+        echo ""
+        _install_instructions
+        exit 1
     fi
 
     ok "Host tools found: adb $(adb version 2>/dev/null | head -1 | awk '{print $NF}'), fastboot $(fastboot --version 2>/dev/null | head -1 | awk '{print $NF}')"
+
+    # Platform-specific USB permission check
+    if [ "$HOM_HOST_OS" = "linux" ]; then
+        # Check if user can access USB devices (common Linux issue)
+        if ! adb devices >/dev/null 2>&1; then
+            warn "ADB could not list devices. You may need USB permissions:"
+            echo "    sudo usermod -aG plugdev \$USER  # then log out and back in"
+        fi
+    elif [ "$HOM_HOST_OS" = "windows" ]; then
+        info "Windows: ensure your device's USB driver is installed."
+        echo "    https://developer.android.com/studio/run/oem-usb"
+    fi
 }
 
 # Check if a device is connected in the given mode.
@@ -84,7 +201,8 @@ check_device_adb() {
 
 check_device_fastboot() {
     local count
-    count=$(fastboot devices 2>/dev/null | grep -c 'fastboot' || true)
+    # On Windows, fastboot may show "fastboot" or "fastbootd"
+    count=$(fastboot devices 2>/dev/null | grep -cE 'fastboot' || true)
     [ "$count" -gt 0 ]
 }
 
@@ -93,6 +211,16 @@ wait_for_device() {
     local elapsed=0
 
     info "Waiting for device in $mode mode (${timeout}s timeout)..."
+
+    # Platform-specific hints while waiting
+    if [ "$mode" = "fastboot" ] && [ "$HOM_HOST_OS" = "termux" ]; then
+        warn "Fastboot in Termux requires USB OTG cable — wireless ADB does not support fastboot."
+    elif [ "$mode" = "fastboot" ] && [ "$HOM_HOST_OS" = "windows" ]; then
+        info "Windows: if device is not detected, check USB driver installation."
+    elif [ "$mode" = "adb" ] && [ "$HOM_HOST_OS" = "termux" ]; then
+        info "Termux ADB: ensure wireless debugging is connected (adb connect <ip>:<port>)."
+    fi
+
     while [ "$elapsed" -lt "$timeout" ]; do
         case "$mode" in
             adb)      check_device_adb && { ok "Device found (ADB)"; return 0; } ;;
@@ -101,6 +229,42 @@ wait_for_device() {
         sleep 2
         elapsed=$((elapsed + 2))
     done
+
+    # Helpful failure message per platform
+    echo ""
+    case "$HOM_HOST_OS" in
+        linux)
+            warn "Device not found. Check:"
+            echo "    • USB cable is data-capable (not charge-only)"
+            echo "    • USB debugging is enabled on device"
+            echo "    • Run: sudo adb devices  (if permission denied)"
+            echo "    • Check udev rules: lsusb | grep -i android"
+            ;;
+        macos)
+            warn "Device not found. Check:"
+            echo "    • USB cable is data-capable"
+            echo "    • USB debugging is enabled"
+            echo "    • Click 'Allow' on any macOS accessory prompts"
+            echo "    • Try: adb kill-server && adb start-server"
+            ;;
+        windows)
+            warn "Device not found. Check:"
+            echo "    • USB cable is data-capable"
+            echo "    • USB debugging is enabled"
+            echo "    • USB driver is installed (Device Manager → show device)"
+            echo "    • Try: adb kill-server && adb start-server"
+            echo "    • Download driver: https://developer.android.com/studio/run/oem-usb"
+            ;;
+        termux)
+            warn "Device not found. Check:"
+            echo "    • Wireless debugging is enabled and paired"
+            echo "    • Run: adb connect <ip>:<port>"
+            echo "    • For fastboot: USB OTG cable is required"
+            ;;
+        *)
+            warn "Device not found. Check USB connection and debugging settings."
+            ;;
+    esac
     return 1
 }
 
@@ -149,9 +313,28 @@ run_c1() {
         wait_for_device fastboot 30 || fail "Device did not enter fastboot mode"
     else
         echo ""
-        warn "No device detected. Please connect your device and either:"
-        echo "    • Enable USB debugging and connect, OR"
-        echo "    • Power off, then hold Power + Volume Down to enter fastboot"
+        warn "No device detected."
+        case "$HOM_HOST_OS" in
+            linux|macos)
+                echo "    Connect your device via USB, then either:"
+                echo "      • Enable USB debugging and run: adb reboot bootloader"
+                echo "      • Or power off, then hold Power + Volume Down to enter fastboot"
+                ;;
+            windows)
+                echo "    1. Ensure USB driver is installed (Device Manager)"
+                echo "    2. Connect device via USB, then either:"
+                echo "       • Run: adb reboot bootloader"
+                echo "       • Or power off, hold Power + Volume Down"
+                ;;
+            termux)
+                echo "    Fastboot requires USB OTG cable — wireless ADB cannot enter fastboot."
+                echo "    Connect target device via OTG, then:"
+                echo "      Power off target → hold Power + Volume Down"
+                ;;
+            *)
+                echo "    Connect device and enter fastboot mode (Power + Volume Down)"
+                ;;
+        esac
         echo ""
         wait_for_device fastboot 60 || fail "No device found in fastboot mode"
     fi
