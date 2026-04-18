@@ -547,8 +547,11 @@ check_host_prereqs() {
         warn "No TARGET device detected."
         echo ""
         echo "  ${CLR_YELLOW}Before connecting, make sure debugging is enabled on TARGET:${CLR_RESET}"
-        _show_debug_enable_instructions "both"
-        echo "  Then connect TARGET via USB cable, USB OTG, or wireless ADB."
+        _show_debug_enable_instructions "usb"
+        echo "  Connection priority (try in this order):"
+        echo "    1. ${CLR_GREEN}USB cable${CLR_RESET} — fastest, supports ADB + fastboot (all modes)"
+        echo "    2. ${CLR_GREEN}USB OTG${CLR_RESET}  — for device-to-device via Termux (ADB + fastboot)"
+        echo "    3. ${CLR_YELLOW}WiFi ADB${CLR_RESET} — last resort, ADB only, no fastboot (--wifi-setup)"
         echo ""
     fi
 
@@ -618,44 +621,69 @@ wait_for_device() {
     echo ""
     case "$HOM_HOST_OS" in
         linux)
-            warn "TARGET device not found. Check:"
-            echo "    • USB cable is data-capable (not charge-only)"
-            echo "    • USB debugging is enabled on TARGET device"
-            echo "    • Run: sudo adb devices  (if permission denied)"
-            echo "    • Check udev rules: lsusb | grep -i android"
+            warn "TARGET device not found. Try these in order:"
+            echo "    1. ${CLR_GREEN}USB cable${CLR_RESET} — check it's data-capable (not charge-only)"
+            echo "    2. USB debugging enabled on TARGET?"
+            echo "    3. Run: sudo adb devices  (if permission denied)"
+            echo "    4. Check udev rules: lsusb | grep -i android"
+            echo "    5. ${CLR_YELLOW}Last resort: WiFi ADB${CLR_RESET} — bash build/host_flash.sh --wifi-setup"
             ;;
         macos)
-            warn "TARGET device not found. Check:"
-            echo "    • USB cable is data-capable"
-            echo "    • USB debugging is enabled on TARGET"
-            echo "    • Click 'Allow' on any macOS accessory prompts"
-            echo "    • Try: adb kill-server && adb start-server"
+            warn "TARGET device not found. Try these in order:"
+            echo "    1. ${CLR_GREEN}USB cable${CLR_RESET} — check it's data-capable"
+            echo "    2. USB debugging enabled on TARGET?"
+            echo "    3. Click 'Allow' on any macOS accessory prompts"
+            echo "    4. Try: adb kill-server && adb start-server"
+            echo "    5. ${CLR_YELLOW}Last resort: WiFi ADB${CLR_RESET} — bash build/host_flash.sh --wifi-setup"
             ;;
         windows)
-            warn "TARGET device not found. Check:"
-            echo "    • USB cable is data-capable"
-            echo "    • USB debugging is enabled on TARGET"
-            echo "    • USB driver is installed for TARGET (Device Manager → show device)"
-            echo "    • Try: adb kill-server && adb start-server"
-            echo "    • Download driver: https://developer.android.com/studio/run/oem-usb"
+            warn "TARGET device not found. Try these in order:"
+            echo "    1. ${CLR_GREEN}USB cable${CLR_RESET} — check it's data-capable"
+            echo "    2. USB debugging enabled on TARGET?"
+            echo "    3. USB driver installed? (Device Manager → show device)"
+            echo "       Download: https://developer.android.com/studio/run/oem-usb"
+            echo "    4. Try: adb kill-server && adb start-server"
+            echo "    5. ${CLR_YELLOW}Last resort: WiFi ADB${CLR_RESET} — bash build/host_flash.sh --wifi-setup"
             ;;
         termux)
-            warn "TARGET device not found. Check:"
-            echo "    • For wireless: TARGET has wireless debugging enabled and paired"
-            echo "    • Run: adb pair <ip>:<pair_port>  then  adb connect <ip>:<port>"
-            echo "    • For USB OTG: OTG cable connected to TARGET"
-            echo "    • Fastboot requires USB OTG — wireless does not support fastboot"
+            warn "TARGET device not found. Try these in order:"
+            echo "    1. ${CLR_GREEN}USB OTG cable${CLR_RESET} — connect OTG cable to TARGET (supports ADB + fastboot)"
+            echo "    2. USB debugging enabled on TARGET?"
+            echo "    3. ${CLR_YELLOW}Last resort: WiFi ADB${CLR_RESET} — ADB only, no fastboot"
+            echo "       Run: bash build/host_flash.sh --wifi-setup"
             ;;
         android)
             warn "TARGET device not found."
-            echo "    Consider using Termux (with wireless debugging) or a PC instead."
+            echo "    1. ${CLR_GREEN}Use a PC with USB cable${CLR_RESET} (recommended)"
+            echo "    2. Use Termux with USB OTG cable"
+            echo "    3. ${CLR_YELLOW}Last resort: WiFi ADB via Termux${CLR_RESET}"
             ;;
         *)
-            warn "TARGET device not found. Check USB connection and debugging settings."
+            warn "TARGET device not found."
+            echo "    1. ${CLR_GREEN}USB cable${CLR_RESET} — check connection and debugging settings"
+            echo "    2. ${CLR_YELLOW}Last resort: WiFi ADB${CLR_RESET} — bash build/host_flash.sh --wifi-setup"
             ;;
     esac
     # Always show debugging enable instructions on failure
     _show_debug_enable_instructions "$mode"
+
+    # Offer WiFi ADB setup as an interactive fallback option
+    if [ -t 0 ] && [ "$mode" = "adb" ]; then
+        echo ""
+        echo "  ${CLR_YELLOW}Would you like to try WiFi ADB as a last resort?${CLR_RESET}"
+        read -r -p "  Try WiFi ADB setup? [y/N]: " try_wifi
+        if [ "$try_wifi" = "y" ] || [ "$try_wifi" = "Y" ]; then
+            run_wifi_setup
+            # Re-check after WiFi setup
+            if check_device_adb; then
+                _resolve_target_serial adb
+                _identify_target_adb
+                ok "TARGET connected via WiFi ADB"
+                _print_target_banner
+                return 0
+            fi
+        fi
+    fi
     return 1
 }
 
@@ -672,8 +700,13 @@ wait_for_device() {
 run_wifi_setup() {
     echo ""
     echo "═══════════════════════════════════════════════════════"
-    echo "  WiFi ADB Setup — Connect to TARGET over wireless"
+    echo "  WiFi ADB Setup — Last Resort Connection"
     echo "═══════════════════════════════════════════════════════"
+    echo ""
+    echo "  ${CLR_YELLOW}WiFi ADB is a last resort. Prefer USB or OTG when possible:${CLR_RESET}"
+    echo "    1. USB cable (PC → TARGET) — fastest, supports ADB + fastboot"
+    echo "    2. USB OTG (Termux → TARGET) — supports ADB + fastboot"
+    echo "    3. WiFi ADB — ADB only, no fastboot, slower, requires Android 11+"
     echo ""
     info "HOST: $HOM_HOST_OS"
     info "No root is required on TARGET for WiFi ADB (Android 11+)."
@@ -798,23 +831,22 @@ _wifi_setup_self_loopback() {
 _wifi_setup_remote() {
     echo ""
     echo "  ┌──────────────────────────────────────────────────┐"
-    echo "  │  WiFi ADB: HOST → remote TARGET (no root needed)│"
+    echo "  │  WiFi ADB: HOST → remote TARGET (LAST RESORT)   │"
     echo "  └──────────────────────────────────────────────────┘"
     echo ""
-    echo "  This connects to a remote TARGET device over WiFi."
-    echo "  TARGET does NOT need root — wireless debugging is"
-    echo "  a standard Android 11+ feature."
+    echo "  ${CLR_YELLOW}Only use WiFi ADB when USB and OTG are not available.${CLR_RESET}"
+    echo "  Limitations: no fastboot, slower transfers, requires Android 11+."
     echo ""
 
     case "$HOM_HOST_OS" in
         termux)
-            echo "  ${CLR_YELLOW}Note: HOST is Termux — device-to-device over WiFi.${CLR_RESET}"
-            echo "  Both devices must be on the same WiFi network."
+            echo "  ${CLR_YELLOW}HOST is Termux — prefer USB OTG cable over WiFi.${CLR_RESET}"
+            echo "  WiFi: both devices must be on the same network."
             echo "  Fastboot is NOT available over WiFi — only ADB (C3 sideload)."
             ;;
         linux|macos|windows)
+            echo "  ${CLR_YELLOW}Prefer a USB cable. WiFi ADB has limited functionality.${CLR_RESET}"
             echo "  HOST ($HOM_HOST_OS) and TARGET must be on the same network."
-            echo "  Fastboot is NOT available over WiFi — only ADB (C3 sideload)."
             echo "  For C1/C2 (fastboot), connect TARGET via USB cable instead."
             ;;
     esac
@@ -1604,25 +1636,26 @@ show_menu() {
     echo ""
     echo "  Choose an action:"
     echo ""
-    echo "    ${CLR_GREEN}Flash / Install:${CLR_RESET}"
+    echo "    ${CLR_GREEN}Flash / Install (USB or OTG recommended):${CLR_RESET}"
     echo "    1) C1 — Temporary TWRP boot (fastboot boot twrp.img)"
-    echo "           Boots TWRP in RAM on TARGET, then sideload."
+    echo "           Boots TWRP in RAM on TARGET, then sideload. ${CLR_CYAN}[USB/OTG]${CLR_RESET}"
     echo ""
     echo "    2) C2 — Direct fastboot flash (pre-patched boot image)"
-    echo "           Flashes boot image from HOST to TARGET. No recovery needed."
+    echo "           Flashes boot image from HOST to TARGET. ${CLR_CYAN}[USB/OTG]${CLR_RESET}"
     echo ""
     echo "    3) C3 — ADB sideload (requires TWRP/OrangeFox on TARGET)"
-    echo "           Sends recovery ZIP from HOST to TARGET."
+    echo "           Sends recovery ZIP from HOST to TARGET. ${CLR_CYAN}[USB/OTG/WiFi]${CLR_RESET}"
     echo ""
-    echo "    ${CLR_CYAN}Setup / Diagnostics:${CLR_RESET}"
-    echo "    4) WiFi setup — Pair and connect to TARGET over wireless ADB"
-    echo "           No root needed on TARGET (Android 11+). Also supports self-loopback."
-    echo ""
-    echo "    5) Dump — Collect diagnostic data from TARGET"
+    echo "    ${CLR_CYAN}Diagnostics:${CLR_RESET}"
+    echo "    4) Dump — Collect diagnostic data from TARGET"
     echo "           Works with or without root. Feeds into the pipeline."
     echo ""
-    echo "    6) Elevated setup — Install Shizuku/LADB for enhanced access"
+    echo "    5) Elevated setup — Install Shizuku/LADB for enhanced access"
     echo "           ADB shell-level (UID 2000) without root. Better data collection."
+    echo ""
+    echo "    ${CLR_YELLOW}Last resort (only if USB/OTG unavailable):${CLR_RESET}"
+    echo "    6) WiFi setup — Pair and connect to TARGET over wireless ADB"
+    echo "           No fastboot. ADB only. Android 11+ required on TARGET."
     echo ""
 
     if [ -n "$zip" ]; then
@@ -1640,9 +1673,9 @@ show_menu() {
         1) run_c1 ;;
         2) run_c2 ;;
         3) run_c3 ;;
-        4) run_wifi_setup ;;
-        5) run_dump ;;
-        6) run_elevated_setup ;;
+        4) run_dump ;;
+        5) run_elevated_setup ;;
+        6) run_wifi_setup ;;
         q|Q) return 0 ;;
         *) warn "Invalid choice"; show_menu ;;
     esac

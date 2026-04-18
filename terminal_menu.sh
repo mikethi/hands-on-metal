@@ -47,7 +47,13 @@ get_prereqs_for_script() {
     case "$rel" in
         build/build_offline_zip.sh)           echo "cmd:zip partition_index" ;;
         build/fetch_all_deps.sh)              echo "cmd:git cmd:curl cmd:unzip network" ;;
-        build/host_flash.sh)                  echo "cmd:adb cmd:fastboot" ;;
+        build/host_flash.sh)                  echo "cmd:adb" ;;
+        build/host_flash.sh:c1)               echo "cmd:adb cmd:fastboot" ;;
+        build/host_flash.sh:c2)               echo "cmd:adb cmd:fastboot" ;;
+        build/host_flash.sh:c3)               echo "cmd:adb" ;;
+        build/host_flash.sh:wifi-setup)       echo "cmd:adb" ;;
+        build/host_flash.sh:dump)             echo "cmd:adb" ;;
+        build/host_flash.sh:elevated-setup)   echo "cmd:adb" ;;
         core/anti_rollback.sh)                echo "boot_image" ;;
         core/apply_defaults.sh)               echo "device_profile partition_index" ;;
         core/boot_image.sh)                   echo "android_device" ;;
@@ -94,6 +100,9 @@ prereq_label() {
         partition_index)  echo "partition index (build/partition_index.json)" ;;
         schema)           echo "database schema (schema/hardware_map.sql)" ;;
         env_github_token) echo "GITHUB_TOKEN environment variable" ;;
+        target_device)    echo "TARGET device connected via USB, OTG, or wireless ADB" ;;
+        target_shizuku)   echo "Shizuku running on TARGET (elevated ADB shell access)" ;;
+        target_ladb)      echo "LADB installed on TARGET (on-device ADB shell)" ;;
         cmd:*)            echo "command: ${prereq#cmd:}" ;;
         *)                echo "$prereq" ;;
     esac
@@ -128,6 +137,20 @@ check_prereq() {
             [ -f "$REPO_ROOT/schema/hardware_map.sql" ] ;;
         env_github_token)
             [ -n "${GITHUB_TOKEN:-}" ] ;;
+        target_device)
+            # Check for any device connected via ADB
+            command -v adb >/dev/null 2>&1 \
+                && adb devices 2>/dev/null | grep -qE '\t(device|recovery|sideload)' ;;
+        target_shizuku)
+            # Shizuku service running on connected device
+            command -v adb >/dev/null 2>&1 \
+                && adb shell "dumpsys activity services moe.shizuku.privileged.api 2>/dev/null" 2>/dev/null \
+                    | grep -q "ServiceRecord" 2>/dev/null ;;
+        target_ladb)
+            # LADB installed on connected device
+            command -v adb >/dev/null 2>&1 \
+                && adb shell "pm list packages 2>/dev/null" 2>/dev/null \
+                    | grep -q "com.draco.ladb" 2>/dev/null ;;
         cmd:*)
             command -v "${prereq#cmd:}" >/dev/null 2>&1 ;;
         *)
@@ -145,6 +168,9 @@ prereq_provider() {
         env_registry)     echo "magisk-module/env_detect.sh" ;;
         partition_index)  echo "build/fetch_all_deps.sh" ;;
         schema)           echo "build/fetch_all_deps.sh" ;;
+        target_device)    echo "build/host_flash.sh:wifi-setup" ;;
+        target_shizuku)   echo "build/host_flash.sh:elevated-setup" ;;
+        target_ladb)      echo "build/host_flash.sh:elevated-setup" ;;
         *)                echo "" ;;
     esac
 }
@@ -156,6 +182,12 @@ script_description() {
         build/build_offline_zip.sh)        echo "Build flashable offline ZIPs (Magisk module + recovery)" ;;
         build/fetch_all_deps.sh)           echo "Download Magisk APK, busybox, and create offline bundle" ;;
         build/host_flash.sh)               echo "Host-assisted flash: fastboot boot / flash / ADB sideload (Mode C)" ;;
+        build/host_flash.sh:c1)            echo "C1: Temporarily boot TWRP on TARGET via fastboot boot" ;;
+        build/host_flash.sh:c2)            echo "C2: Flash pre-patched boot image to TARGET via fastboot" ;;
+        build/host_flash.sh:c3)            echo "C3: ADB sideload recovery ZIP to TARGET in custom recovery" ;;
+        build/host_flash.sh:wifi-setup)    echo "Pair and connect to TARGET over wireless ADB (no root needed)" ;;
+        build/host_flash.sh:dump)          echo "Collect diagnostic/partition data from TARGET (root-adaptive)" ;;
+        build/host_flash.sh:elevated-setup) echo "Set up Shizuku/LADB on TARGET for elevated ADB access" ;;
         core/anti_rollback.sh)             echo "Check SPL / AVB rollback risk before flashing" ;;
         core/apply_defaults.sh)            echo "Apply device-family defaults from partition index" ;;
         core/boot_image.sh)                echo "Acquire the boot or init_boot image from the device" ;;

@@ -135,25 +135,28 @@ and dependency checker (`check_deps.sh`).
 
 | Your situation | Root? | Recovery? | Connection | Acquisition methods | Flash path | Install mode |
 |---------------|:---:|:---:|---|---|---|---|
-| **Magisk installed** | ✓ | ✗ | Any | 1→2→3→4 (all available) | A (Magisk) | [INSTALL.md](INSTALL.md) |
-| **TWRP / OrangeFox** | ✓ | ✓ | Any | 1→2→3→4 (all available) | B (Recovery) | [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md) |
+| **Magisk installed** | ✓ | ✗ | USB (pref) | 1→2→3→4 (all available) | A (Magisk) | [INSTALL.md](INSTALL.md) |
+| **TWRP / OrangeFox** | ✓ | ✓ | USB (pref) | 1→2→3→4 (all available) | B (Recovery) | [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md) |
 | **Unlocked BL + PC (USB)** | ✗ | ✗ | USB | 2→3→4 (no root DD) | C (Fastboot) | This guide (C1 or C2) |
 | **Unlocked BL + PC + temp TWRP** | ✓³ | ✓³ | USB | 1→2→3→4 (all via temp TWRP) | B (Recovery) | This guide (C1) |
-| **No root, WiFi ADB only** | ✗ | ✗ | WiFi | 2 (pre-place), dump | Dump only⁴ | `--wifi-setup` + `--dump` |
-| **No root, WiFi ADB + USB for flash** | ✗ | ✗ | WiFi → USB | 2→3→4 | C (Fastboot) | WiFi setup → `adb reboot bootloader` → USB flash |
-| **Termux self-loopback** | ✗ | ✗ | WiFi (self) | 2 (pre-place) | None⁵ | `--wifi-setup` self-loopback |
+| **No root, WiFi ADB only** ⁶ | ✗ | ✗ | WiFi | 2 (pre-place), dump | Dump only⁴ | `--wifi-setup` + `--dump` |
+| **No root, WiFi → USB** ⁶ | ✗ | ✗ | WiFi → USB | 2→3→4 | C (Fastboot) | WiFi setup → `adb reboot bootloader` → USB flash |
+| **Termux self-loopback** ⁶ | ✗ | ✗ | WiFi (self) | 2 (pre-place) | None⁵ | `--wifi-setup` self-loopback |
 | **Locked bootloader** | ✗ | ✗ | Any | None | None | Unlock first |
 | **No PC, no root, no recovery** | ✗ | ✗ | None | None | None | Not possible |
 
 ³ `fastboot boot twrp.img` gives you a temporary recovery with root.  
 ⁴ WiFi ADB cannot flash — use `--dump` to collect data, then connect USB for fastboot.  
-⁵ Self-loopback cannot flash the same device — pre-place boot image, then connect to a PC.
+⁵ Self-loopback cannot flash the same device — pre-place boot image, then connect to a PC.  
+⁶ **Last resort** — WiFi ADB rows. Always prefer USB or OTG first.
 
 > **Key insight:** Root access enables method 1 (root DD) and is required
 > for flash paths A and B. Without root, you must pre-place the boot image
-> (method 2) or use the fastboot flash path (C) from a PC. WiFi ADB
-> without root is useful for diagnostics, pre-placing files, and rebooting
-> to bootloader for subsequent USB fastboot operations.
+> (method 2) or use the fastboot flash path (C) from a PC.
+>
+> **WiFi ADB is always a last resort.** It is offered as an option
+> (menu item 6) and as an interactive fallback when USB/OTG detection
+> fails. Prefer USB cable or USB OTG for all operations.
 
 ## Where user input is required (fallback only)
 
@@ -672,12 +675,36 @@ fastboot boot twrp.img
 When HOST is an Android device running Termux and TARGET is another
 Android device:
 
-| Connection | ADB? | Fastboot? | Notes |
-|-----------|:---:|:---:|---|
-| **Wireless debugging** | ✓ | ✗ | TARGET must have Android 11+ with wireless debugging enabled |
-| **USB OTG cable** | ✓ | ✓ | Physical cable from HOST's USB-C/micro to TARGET |
+| Priority | Connection | ADB? | Fastboot? | Notes |
+|:---:|-----------|:---:|:---:|---|
+| 1st | **USB OTG cable** | ✓ | ✓ | Physical cable from HOST's USB-C/micro to TARGET. **Always preferred.** |
+| 2nd | **Wireless debugging** | ✓ | ✗ | Last resort. TARGET must have Android 11+. No fastboot. |
 
-### Wireless ADB setup (Termux → TARGET)
+### USB OTG setup (Termux → TARGET) — preferred
+
+```bash
+# On HOST (Termux):
+pkg install android-tools
+
+# On TARGET: enable USB debugging
+#   Settings → About phone → tap 'Build number' 7 times
+#   Settings → Developer options → USB debugging → ON
+
+# Connect TARGET via USB OTG cable
+# TARGET will prompt "Allow USB debugging?" — tap Allow
+
+# Verify:
+adb devices
+
+# Fastboot also works via OTG:
+adb reboot bootloader
+fastboot devices
+```
+
+### Wireless ADB setup (Termux → TARGET) — last resort
+
+> **Only use this if USB OTG is not available.**
+> No fastboot support. Slower transfers. Requires Android 11+ on TARGET.
 
 ```bash
 # On TARGET: Settings → Developer options → Wireless debugging → enable
@@ -704,34 +731,32 @@ bash build/host_flash.sh --c3 recovery.zip
 > **Limitation:** Wireless ADB does not support fastboot. If you need
 > C1 or C2, you must use a USB OTG cable.
 
-### USB OTG setup (Termux → TARGET)
-
-```bash
-# On HOST (Termux):
-pkg install android-tools
-
-# Connect TARGET via USB OTG cable
-# TARGET will prompt "Allow USB debugging?" — tap Allow
-
-# Verify:
-adb devices
-
-# Fastboot also works via OTG:
-adb reboot bootloader
-fastboot devices
-```
-
 ---
 
 ## WiFi ADB for non-rooted TARGET devices
 
-Android 11+ includes **Wireless Debugging** — a built-in feature that
-enables ADB over WiFi **without root**. This is useful when:
+> **WiFi ADB is a last resort.** Always prefer USB cable (PC → TARGET)
+> or USB OTG (Termux → TARGET) — both are faster and support all modes
+> including fastboot. Use WiFi ADB only when USB/OTG is unavailable.
 
-- TARGET has no root, no recovery, no USB cable available
-- You want to pre-place files, diagnose, or run ADB commands on TARGET
-- You want to self-connect (Termux on the same device connecting to its
-  own wireless debugging port)
+Android 11+ includes **Wireless Debugging** — a built-in feature that
+enables ADB over WiFi **without root**. Use it as a fallback when:
+
+- No USB cable or OTG adapter is available
+- USB port is damaged or occupied
+- TARGET is physically distant from HOST
+- You need to pre-place files or run diagnostics before a USB session
+
+The script offers WiFi setup **as an option** (menu item 6) and
+**as an interactive fallback** when USB/OTG device detection fails.
+
+### Connection priority (always try in this order)
+
+| Priority | Connection | ADB | Fastboot | Speed | When to use |
+|:---:|-----------|:---:|:---:|---|---|
+| 1st | **USB cable** (PC → TARGET) | ✓ | ✓ | Fast | Always preferred |
+| 2nd | **USB OTG** (Termux → TARGET) | ✓ | ✓ | Fast | Device-to-device |
+| 3rd | **WiFi ADB** (any HOST → TARGET) | ✓ | ✗ | Slow | Last resort only |
 
 ### What works over WiFi ADB without root
 
