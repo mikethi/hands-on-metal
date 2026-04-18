@@ -41,8 +41,8 @@ _reg_set() {
 }
 
 _json_str() {
-    # Escape stdin for JSON output. Read from stdin so callers can pipe
-    # into us, e.g.  printf '%s' "$x" | _json_str
+    # Escape stdin for JSON output. Reads from stdin so callers can pipe in,
+    # e.g.  printf '%s' "$x" | _json_str
     sed 's/\\/\\\\/g;s/"/\\"/g;s/	/\\t/g'
 }
 
