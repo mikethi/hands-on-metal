@@ -368,7 +368,8 @@ partition naming, and boot security configuration"
             # `unzip -l` indents filenames with spaces, so the prefix we
             # accept before the filename is "start-of-line | space | /".
             if [ -n "$_inner_list" ] && [ -s "$_inner_list" ]; then
-                local _ftag="factory_zip:$(basename "$factory_zip")"
+                local _ftag
+                _ftag="factory_zip:$(basename "$factory_zip")"
                 local _has_boot=0 _has_init_boot=0 _has_vendor_boot=0
                 grep -qE '(^| |/)boot\.img$'        "$_inner_list" && _has_boot=1
                 grep -qE '(^| |/)init_boot\.img$'   "$_inner_list" && _has_init_boot=1

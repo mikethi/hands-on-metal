@@ -1402,7 +1402,7 @@ _verify_image_integrity() {
 _detect_partition() {
     local file="$1"
     local base
-    base=$(basename "$file" 2>/dev/null | tr 'A-Z' 'a-z')
+    base=$(basename "$file" 2>/dev/null | tr '[:upper:]' '[:lower:]')
     case "$base" in
         *init_boot*)   echo "init_boot"   ;;
         *vendor_boot*) echo "vendor_boot" ;;
