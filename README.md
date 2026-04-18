@@ -173,7 +173,7 @@ chmod +x ~/hands-on-metal-setup.sh
 ~/hands-on-metal-setup.sh
 cd ~/hands-on-metal               # enter the repo after setup
 bash terminal_menu.sh
-# Select option 1 (build/build_offline_zip.sh) — the suggested next step after fetching dependencies
+# Select option 1 (build/build_offline_zip.sh) — the next step after setup is complete
 ```
 
 **Or clone first**, then run the setup script locally:
@@ -190,7 +190,7 @@ chmod +x ~/hands-on-metal-setup.sh
 ~/hands-on-metal-setup.sh
 cd ~/hands-on-metal
 bash terminal_menu.sh
-# Select option 1 (build/build_offline_zip.sh) — the suggested next step after fetching dependencies
+# Select option 1 (build/build_offline_zip.sh) — the next step after setup is complete
 ```
 
 If `git` is not installed the script attempts to install it automatically
@@ -291,8 +291,13 @@ cd ~/hands-on-metal
 adb pull /sdcard/hands-on-metal/logs/ ./logs/
 adb pull /sdcard/hands-on-metal/live_dump/ ./live_dump/
 
+# Find the RUN_ID from the log filenames (e.g. master_20250417_143022.log → RUN_ID is 20250417_143022)
+# ls ./logs/master_*.log
+
 bash terminal_menu.sh
-# Select option 25 (pipeline/parse_logs.py) — pass arguments: --log "./logs/master_<RUN_ID>.log" --out /tmp/parsed.json
+# Select option 25 (pipeline/parse_logs.py)
+#   Arguments: --log "./logs/master_<RUN_ID>.log" --out /tmp/parsed.json
+#   Replace <RUN_ID> with the timestamp from your log filename
 # After completion, press 's' for the suggested next step: option 22 (pipeline/build_table.py)
 EOF
 chmod +x ~/hands-on-metal-pipeline.sh
@@ -306,9 +311,10 @@ cat <<'EOF' > ~/hands-on-metal-test.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
+python -m pytest tests/
+# After tests pass, launch the terminal menu:
 bash terminal_menu.sh
-# Tests are not a menu option — run them directly after selecting any pipeline script
-# Or run directly: python -m pytest tests/
+# Press 's' for the suggested next step, or select any option by number
 EOF
 chmod +x ~/hands-on-metal-test.sh
 ~/hands-on-metal-test.sh
