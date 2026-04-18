@@ -51,11 +51,56 @@ brew install android-platform-tools
 
 ## Where user input is required
 
-Every install path has points where you must provide input — either on the
-device screen, in the PC terminal, or at a script prompt. This section lists
-every input point so you know what to expect.
+The installer is designed to be **fully automatic**. User input is only
+needed as a **fallback** when automatic detection fails. Most installs
+complete with no prompts beyond the initial flash/sideload action.
+
+### What runs automatically (no input needed)
+
+The guided installer handles these steps without any user input:
+
+| Step | What the installer does automatically |
+|------|--------------------------------------|
+| Environment detection | Probes shell tools, block devices, crypto state |
+| Device profile | Reads model, API level, A/B slots, SAR, AVB, Treble |
+| Boot image acquisition | Tries **four methods in order** before asking you (see below) |
+| Anti-rollback check | Compares SPL and AVB rollback index — blocks or proceeds |
+| Magisk patch | Applies correct flags (`KEEPVERITY`, `KEEPFORCEENCRYPT`, etc.) |
+| Flash + verify | Writes patched image, verifies SHA-256, reboots |
+
+### Boot image acquisition — automatic fallback chain
+
+The installer tries each method in order and **stops at the first success**.
+User input is the **last resort** — method 4 of 4:
+
+```
+Method 1: Root DD (automatic)
+  └─ Has root + block device found? → DD copy from live partition
+       └─ Success → done (no input needed)
+       └─ Fail → try method 2
+
+Method 2: Pre-placed file (automatic)
+  └─ Image already at /sdcard/Download/boot.img or boot_work/?
+       └─ Found → done (no input needed)
+       └─ Not found → try method 3
+
+Method 3: Google factory download (automatic on Pixel; confirmation in interactive mode)
+  └─ Google Pixel + network + curl + unzip available?
+       └─ Non-interactive (TWRP): downloads automatically (no input)
+       └─ Interactive (terminal): asks confirmation (see Fallback Prompt 1)
+       └─ Not a Pixel or no network → try method 4
+
+Method 4: Manual user prompt (FALLBACK — only if methods 1–3 all failed)
+  └─ Interactive: asks for block device or image path (see Fallback Prompt 2)
+  └─ Non-interactive (TWRP): uses /sdcard/Download/boot.img as default
+```
+
+> **In most cases, method 1 or 2 succeeds and you see no prompts at all.**
 
 ### Bootloader unlock (one-time, before any install)
+
+This is the only step that **always** requires user input — it's a one-time
+setup, not part of the installer itself:
 
 | Step | Where | What you do |
 |------|-------|-------------|
@@ -66,7 +111,10 @@ every input point so you know what to expect.
 | Unlock command | PC terminal | `fastboot flashing unlock` (or `fastboot oem unlock` on older devices) |
 | Confirm unlock | Device: bootloader screen | Press **Volume Up** to confirm (**this wipes all data**) |
 
-### C1 — Temporary TWRP boot (user input points)
+### C1 — Temporary TWRP boot (required input)
+
+These are the only manual steps — everything after flashing/sideloading the
+ZIP is automatic:
 
 | Step | Where | What you do | What you see |
 |------|-------|-------------|-------------|
@@ -77,7 +125,12 @@ every input point so you know what to expect.
 | OR push ZIP (option A) | PC terminal | `adb push hands-on-metal-recovery-*.zip /sdcard/` | Transfer completes |
 | Flash ZIP (option A) | Device: TWRP | Tap **Install** → navigate to ZIP → **Swipe to confirm** | Installer output scrolls on screen |
 
-### C2 — Direct fastboot flash (user input points)
+After this, the installer runs automatically. You only see fallback prompts
+if the boot image can't be found (see below).
+
+### C2 — Direct fastboot flash (required input)
+
+All steps are on the PC — no installer prompts:
 
 | Step | Where | What you do | What you see |
 |------|-------|-------------|-------------|
@@ -85,7 +138,7 @@ every input point so you know what to expect.
 | Flash patched image | PC terminal | `fastboot flash boot patched_boot.img` | `OKAY` + transfer speed |
 | Reboot | PC terminal | `fastboot reboot` | Device reboots to Android |
 
-### C3 — ADB sideload (user input points)
+### C3 — ADB sideload (required input)
 
 | Step | Where | What you do | What you see |
 |------|-------|-------------|-------------|
@@ -93,18 +146,18 @@ every input point so you know what to expect.
 | Start sideload mode | Device: TWRP | **Advanced** → **ADB Sideload** → **Swipe** | "Now send the package..." |
 | Send ZIP | PC terminal | `adb sideload hands-on-metal-recovery-*.zip` | Progress bar/percentage |
 
-### During the guided installer (all modes using the recovery ZIP)
+After sideload completes, the installer runs automatically with no prompts
+(TWRP sideload is non-interactive — all fallbacks use safe defaults).
 
-Once the recovery ZIP starts running (via flash, sideload, or TWRP install),
-the guided installer may ask for input at these points. In **non-interactive
-mode** (TWRP flash / sideload), the installer uses safe defaults
-automatically. In **interactive mode** (ADB shell / Termux), you will see
-prompts.
+### Fallback prompts (only when automatic acquisition fails)
 
-#### Prompt 1 — Google Pixel factory image download (interactive only)
+These prompts **only appear in interactive mode** (ADB shell / Termux). In
+TWRP flash or sideload, the installer uses defaults and never prompts.
 
-Appears when: the device is a Google Pixel and the boot image couldn't be
-auto-discovered.
+#### Fallback Prompt 1 — Google Pixel factory download confirmation
+
+**When:** Device is a Google Pixel, root DD failed, no pre-placed image found,
+and you're running interactively.
 
 ```
   This looks like a Google Pixel device (shiba).
@@ -114,15 +167,15 @@ auto-discovered.
 Download factory image for shiba (build AP4A.250205.002)? [yes/no] [yes]:
 ```
 
-**Your input:** Press **Enter** to accept `yes`, or type `no` and press Enter to skip.
+**Your input:** Press **Enter** to accept `yes`, or type `no` + Enter to skip.
 
-**Non-interactive (TWRP):** Automatically uses `yes` and downloads if network
-is available.
+**Non-interactive (TWRP):** Automatically uses `yes` — no prompt shown.
 
-#### Prompt 2 — Manual boot partition path (interactive only)
+#### Fallback Prompt 2 — Manual boot partition path
 
-Appears when: all automatic boot image acquisition methods have failed (no
-root DD, no pre-placed file, no factory download).
+**When:** All three automatic methods failed (no root DD, no pre-placed file,
+no factory download) and you're running interactively. This is the **last
+resort**.
 
 ```
 ACTION REQUIRED — please follow these steps:
@@ -147,19 +200,21 @@ Enter full path to boot block device or image file [/sdcard/Download/boot.img]:
 press **Enter**. Or press **Enter** to use the default path.
 
 **Non-interactive (TWRP):** Automatically uses `/sdcard/Download/boot.img`.
-If that file doesn't exist, the installer aborts and logs the error.
+If that file doesn't exist, the installer aborts with a clear error.
 
-> **Tip:** To avoid this prompt entirely, push the boot image to the device
-> before running the installer:
+> **Tip — avoid all fallback prompts:** Push the boot image to the device
+> before running the installer. The automatic pre-placed file scan (method 2)
+> will find it and skip all prompts:
 > ```bash
 > adb push boot.img /sdcard/Download/
 > ```
 
-#### No further prompts
+### No prompts after boot image acquisition
 
-The remaining steps (anti-rollback check, Magisk patch, flash, verify) run
-**without any user input**. They either succeed or abort with a clear error
-message. If aborted, the device is left in a safe, bootable state.
+Once the boot image is acquired (by any method), the remaining steps —
+anti-rollback check, Magisk patch, flash, SHA-256 verification, and reboot —
+run **entirely without user input**. They either succeed or abort with a clear
+error message, leaving the device in a safe, bootable state.
 
 ### After install — verification (all modes)
 

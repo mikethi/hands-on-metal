@@ -168,25 +168,102 @@ The installer also collects hardware metadata, VINTF manifests, and fstab files 
 
 ## Where user input is required
 
-The recovery ZIP installer is mostly automatic — it runs inside TWRP's
-non-interactive context, so all prompts use safe defaults. User input is
-only needed at these points:
+The recovery ZIP installer runs inside TWRP/OrangeFox. **Recovery always
+has root** (`uid=0`), so the installer has full access to block devices.
+Because TWRP's flash context is **non-interactive** (stdin is not a TTY),
+all fallback prompts use safe defaults automatically — **you will never see
+a text prompt** during a TWRP flash or ADB sideload.
+
+### Automatic behavior (with root + recovery)
+
+This is the most capable environment. The installer has root AND access to
+all partitions. The typical flow requires **no input beyond starting the
+flash**:
+
+```
+You flash ZIP in TWRP
+  └─ Installer starts automatically
+      └─ Root detected (uid=0 in recovery) ✓
+      └─ Boot partition auto-discovered via block device ✓
+      └─ DD copy succeeds → boot image acquired (no prompt)
+      └─ Anti-rollback check passes (automatic)
+      └─ Magisk patch runs (automatic)
+      └─ Flash + SHA-256 verify (automatic)
+      └─ Module installed (automatic)
+      └─ Recovery hardware data collected (automatic)
+      └─ Reboot (automatic)
+```
+
+### Boot image fallback chain (root + recovery)
+
+If the automatic `dd` copy fails, the installer tries each fallback. In
+TWRP's non-interactive context, fallback prompts use defaults silently:
+
+| Priority | Method | Root? | Recovery? | User input in TWRP? |
+|----------|--------|:---:|:---:|---|
+| 1 | **Root DD** — copy live boot partition | ✓ Has it | ✓ Has it | None — automatic |
+| 2 | **Pre-placed file** — scan `/sdcard/Download/` | Not needed | Not needed | None — automatic if file exists |
+| 3 | **Google factory download** (Pixel only) | Not needed | Not needed | None — auto-accepts `yes` (non-interactive) |
+| 4 | **Manual path fallback** | Depends¹ | Not needed | None — auto-uses `/sdcard/Download/boot.img` |
+
+¹ If the default path points to a block device, root is needed (and
+available in recovery). If it's a file, no root needed.
+
+> **In Mode B with recovery, method 1 succeeds in the vast majority of
+> cases.** The only scenario where it fails is an unusual partition layout
+> without standard by-name symlinks.
+
+### Required input (always needed)
 
 | When | Where | What you do |
 |------|-------|-------------|
-| **Boot into recovery** | Device (physical) | Hold **Power + Volume Down** (device-specific) or run `adb reboot recovery` |
-| **Flash the ZIP** | Device: TWRP | Tap **Install** → navigate to ZIP → **Swipe to confirm** |
-| **OR: ADB sideload** | Device: TWRP + PC | TWRP: **Advanced** → **ADB Sideload** → **Swipe**; PC: `adb sideload <zip>` |
-| **Boot image not found** (rare) | Device: TWRP output | Installer prints instructions on screen. Push `boot.img` to `/sdcard/Download/` via ADB and re-flash the ZIP |
-| **After reboot** | Device | Open Magisk app → confirm root; open Termux → run `su` |
+| **Boot into recovery** | Device (physical) | Hold Power + Volume Down (device-specific) or `adb reboot recovery` |
+| **Flash the ZIP** | Device: TWRP | **Install** → navigate to ZIP → **Swipe to confirm** |
+| **OR: ADB sideload** | Device + PC | TWRP: **Advanced** → **ADB Sideload** → **Swipe**; PC: `adb sideload <zip>` |
+| **After reboot** | Device | Open Magisk app → confirm root; Termux → `su` |
 
-> **Note:** In TWRP's flash context, the installer cannot read interactive
-> input. If the boot image can't be auto-discovered, it uses
-> `/sdcard/Download/boot.img` as the default. Pre-place the image there
-> before flashing to avoid issues:
-> ```bash
-> adb push boot.img /sdcard/Download/
-> ```
+### What if the boot image can't be found? (no prompt shown)
+
+In TWRP's non-interactive context, the installer **cannot ask you a
+question**. If all four automatic methods fail, it tries the default path
+`/sdcard/Download/boot.img`. If that file doesn't exist either, the
+installer **aborts with a clear error** in the TWRP output.
+
+**To recover from this:**
+
+1. Check the error in TWRP output or logs at `/sdcard/hands-on-metal/logs/`.
+2. From TWRP terminal or ADB shell, list partitions:
+   ```bash
+   ls /dev/block/bootdevice/by-name/
+   ls /dev/block/by-name/
+   ```
+3. Push the correct boot image from your PC:
+   ```bash
+   adb push boot.img /sdcard/Download/
+   ```
+4. Re-flash the ZIP — method 2 (pre-placed file) will find it automatically.
+
+### What if I have no recovery?
+
+Without a custom recovery, you cannot use Mode B. Your options:
+
+| Your situation | What to do |
+|---------------|------------|
+| **Unlocked bootloader + PC** | Use Mode C: `fastboot boot twrp.img` to temporarily boot TWRP, or `fastboot flash boot` directly → [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md) |
+| **Magisk already installed** | Use Mode A: flash via Magisk app → [INSTALL.md](INSTALL.md) |
+| **No root, no recovery, no PC** | Not possible — you need at least a PC with fastboot |
+
+### What if I have recovery but no root?
+
+This combination is unusual — TWRP/OrangeFox always provides root in the
+recovery environment. If for some reason root is not available (e.g.,
+restricted recovery), the installer falls back to methods 2–4 (pre-placed
+file, factory download, manual path). Pre-place the boot image before
+flashing to ensure success:
+
+```bash
+adb push boot.img /sdcard/Download/
+```
 
 ---
 

@@ -114,42 +114,91 @@ The installer patches the image and flashes it automatically. The device reboots
 
 ## Where user input is required
 
-The Magisk-path installer runs inside the Magisk app's module installer. It
-is interactive — if a prompt appears, you type your response directly in the
-Magisk output console.
+The Magisk-path installer runs inside the Magisk app's module installer.
+**Magisk runs as root (`uid=0`)**, so the installer has full access to block
+devices. In most cases the install completes with no prompts at all — user
+input is only a **fallback** when automatic detection fails.
 
-| When | Where | What you do | Details |
-|------|-------|-------------|---------|
-| **Select ZIP** | Device: Magisk app | **Modules** → **Install from storage** → select the `.zip` | File picker opens |
-| **Boot image prompt (if needed)** | Device: Magisk installer output | Type the path to your boot image + press Enter | Only appears if auto-discovery fails (see below) |
-| **Google Pixel download prompt** | Device: Magisk installer output | Press Enter to accept `yes`, or type `no` | Only on Pixel devices when boot partition isn't found |
-| **After reboot** | Device | Open Magisk app → confirm root; open Termux → run `su` | Verification step |
+### Automatic behavior (with root, no recovery)
 
-### Boot image prompt — what it looks like
-
-If the installer can't find your boot partition automatically, you'll see:
+Because Mode A always has root (Magisk provides it), the installer's first
+acquisition method — live `dd` copy from the boot partition — almost always
+succeeds. The typical flow requires **no user input beyond selecting the ZIP**:
 
 ```
-ACTION REQUIRED — please follow these steps:
-  1) The installer could not automatically obtain the boot image.
-  ...
-  5)   a) Place boot.img in /sdcard/Download/ and re-run
-  6)   b) Extract it from a factory image ZIP on your PC and push:
-  7)        adb push boot.img /sdcard/Download/
-  8)   c) Enter a block device path if you know it:
-  9)        /dev/block/bootdevice/by-name/boot
-  ...
+You select ZIP in Magisk app
+  └─ Installer starts automatically
+      └─ Root detected (uid=0 via Magisk) ✓
+      └─ Boot partition auto-discovered via block device ✓
+      └─ DD copy succeeds → boot image acquired (no prompt)
+      └─ Anti-rollback check passes (automatic)
+      └─ Magisk patch runs (automatic)
+      └─ Flash + SHA-256 verify (automatic)
+      └─ Reboot (automatic)
+```
 
+### Boot image fallback chain (root available, no recovery)
+
+If the automatic `dd` copy fails (e.g., unusual partition layout), the
+installer tries each fallback before asking you:
+
+| Priority | Method | Root needed? | Recovery needed? | User input? |
+|----------|--------|:---:|:---:|---|
+| 1 | **Root DD** — copy live boot partition via `dd` | ✓ Yes | No | None — fully automatic |
+| 2 | **Pre-placed file** — scan `/sdcard/Download/`, `boot_work/` | No | No | None — automatic if file exists |
+| 3 | **Google factory download** — download + extract (Pixel only) | No | No | **Fallback:** confirmation prompt (defaults to `yes`) |
+| 4 | **Manual path** — ask user for block device or file path | Depends¹ | No | **Fallback:** path prompt (defaults to `/sdcard/Download/boot.img`) |
+
+¹ If you enter a block device path (e.g., `/dev/block/by-name/boot`), root
+is required to read it. If you enter a file path, no root is needed for that
+step.
+
+> **In Mode A, method 1 succeeds in the vast majority of cases.** You will
+> only see fallback prompts if the block device can't be auto-discovered
+> (unusual partition layout or missing by-name symlinks).
+
+### Required input (always needed)
+
+| When | Where | What you do |
+|------|-------|-------------|
+| **Select ZIP** | Device: Magisk app | **Modules** → **Install from storage** → select the `.zip` |
+| **After reboot** | Device | Open Magisk app → confirm root; open Termux → run `su` |
+
+### Fallback input (only when automatic methods fail)
+
+#### Fallback Prompt 1 — Google Pixel factory download (Pixel only)
+
+**When:** Root DD failed + no pre-placed file + device is a Google Pixel.
+
+```
+Download factory image for shiba (build AP4A.250205.002)? [yes/no] [yes]:
+```
+
+**Your input:** Press **Enter** to accept `yes`, or type `no` + Enter to skip.
+
+#### Fallback Prompt 2 — Manual boot image path (last resort)
+
+**When:** All three automatic methods failed.
+
+```
 Enter full path to boot block device or image file [/sdcard/Download/boot.img]:
 ```
 
-**Your input:** Type the full path (e.g., `/dev/block/by-name/boot`) and press
+**Your input:** Type the path (e.g., `/dev/block/by-name/boot`) and press
 Enter, or just press Enter to use the default.
 
-> **Tip:** To avoid this prompt, push the boot image before flashing:
+> **Tip — avoid all fallback prompts:** Push the boot image to the device
+> before flashing. Method 2 (pre-placed file) will find it automatically:
 > ```bash
 > adb push boot.img /sdcard/Download/
 > ```
+
+### What if I have no root and no recovery?
+
+Mode A **requires Magisk to already be installed** — which means root is
+always available. If you have neither root nor recovery, you cannot use
+Mode A. See [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md) for
+Mode C (fastboot-based install without root or recovery).
 
 ### All other steps are automatic
 
