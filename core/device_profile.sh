@@ -202,6 +202,7 @@ partition naming, and boot security configuration"
     # vendor_boot is always separate; we note it but don't patch it.
 
     local boot_part="boot"
+    local boot_part_source="default"
     local init_boot_dev vendor_boot_dev boot_dev
 
     init_boot_dev=$(_find_block init_boot 2>/dev/null || true)
@@ -210,6 +211,24 @@ partition naming, and boot security configuration"
 
     if [ -b "$init_boot_dev" ]; then
         boot_part="init_boot"
+        boot_part_source="block_device"
+    else
+        # Fallback: without root the by-name block paths are not
+        # readable (e.g. Termux), so _find_block can't see init_boot
+        # even when the device has it.  Devices that *launched* on
+        # Android 13 (API 33) or later always ship with an init_boot
+        # partition and Magisk patches init_boot on those devices.
+        # See https://source.android.com/docs/core/architecture/partitions/generic-boot
+        case "$api_level" in
+            ''|*[!0-9]*) : ;;  # unknown / non-numeric → keep default
+            *)
+                if [ "$api_level" -ge 33 ]; then
+                    boot_part="init_boot"
+                    boot_part_source="first_api_level=$api_level"
+                    log_info "init_boot block device not visible (likely no root); inferring init_boot from first_api_level=$api_level"
+                fi
+                ;;
+        esac
     fi
 
     _reg_set device HOM_DEV_BOOT_PART       "$boot_part"
