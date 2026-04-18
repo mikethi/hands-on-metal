@@ -74,14 +74,14 @@ get_prereqs_for_script() {
         recovery-zip/collect_recovery.sh)     echo "root android_device" ;;
         pipeline/build_table.py)              echo "cmd:python3 schema" ;;
         pipeline/failure_analysis.py)         echo "cmd:python3" ;;
-        pipeline/github_notify.py)            echo "cmd:python3 env_github_token" ;;
+        pipeline/github_notify.py)            echo "cmd:python3" ;;
         pipeline/parse_logs.py)               echo "cmd:python3" ;;
         pipeline/parse_manifests.py)          echo "cmd:python3 schema" ;;
         pipeline/parse_pinctrl.py)            echo "cmd:python3 schema" ;;
         pipeline/parse_symbols.py)            echo "cmd:python3" ;;
         pipeline/report.py)                   echo "cmd:python3" ;;
         pipeline/unpack_images.py)            echo "cmd:python3" ;;
-        pipeline/upload.py)                   echo "cmd:python3 env_github_token" ;;
+        pipeline/upload.py)                   echo "cmd:python3" ;;
         *)                                    echo "" ;;
     esac
 }
@@ -278,14 +278,14 @@ script_description() {
         recovery-zip/collect_recovery.sh)  echo "Recovery-mode collection with read-only mounts" ;;
         pipeline/build_table.py)           echo "Build hardware-map SQLite database from collected data" ;;
         pipeline/failure_analysis.py)      echo "Analyse install logs for failure patterns" ;;
-        pipeline/github_notify.py)         echo "Post analysis results as a GitHub issue comment" ;;
+        pipeline/github_notify.py)         echo "Post analysis results as a GitHub issue comment (or dry-run preview)" ;;
         pipeline/parse_logs.py)            echo "Parse master log and run-manifest files" ;;
         pipeline/parse_manifests.py)       echo "Parse VINTF / sysconfig / permissions XML manifests" ;;
         pipeline/parse_pinctrl.py)         echo "Parse pinctrl debug files into database" ;;
         pipeline/parse_symbols.py)         echo "Parse vendor library symbols and ELF sections" ;;
         pipeline/report.py)                echo "Generate HTML hardware report from database" ;;
         pipeline/unpack_images.py)         echo "Unpack boot / vendor-boot images and extract ramdisk" ;;
-        pipeline/upload.py)                echo "Upload diagnostic bundle to GitHub Gist" ;;
+        pipeline/upload.py)                echo "Upload diagnostic bundle to GitHub Gist (or local summary)" ;;
         *)                                 echo "" ;;
     esac
 }
@@ -723,7 +723,12 @@ script_completion_success() {
             echo "Analyzed install logs and identified failure patterns."
             ;;
         pipeline/github_notify.py)
-            echo "Posted analysis results as a GitHub issue comment."
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+                echo "Posted analysis results as a GitHub issue comment."
+            else
+                echo "Printed analysis results locally (dry-run — no GITHUB_TOKEN set)."
+                echo "  Set GITHUB_TOKEN to post results as a GitHub issue comment."
+            fi
             ;;
         pipeline/parse_logs.py)
             echo "Parsed master log and run-manifest files."
@@ -744,7 +749,12 @@ script_completion_success() {
             echo "Unpacked boot / vendor-boot images and extracted the ramdisk."
             ;;
         pipeline/upload.py)
-            echo "Uploaded the diagnostic bundle to GitHub Gist."
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+                echo "Uploaded the diagnostic bundle to GitHub Gist."
+            else
+                echo "Displayed local bundle summary (no GITHUB_TOKEN set)."
+                echo "  Set GITHUB_TOKEN and re-run with --token to upload to GitHub Gist."
+            fi
             ;;
         *)
             echo "Script completed successfully."
@@ -815,7 +825,10 @@ script_completion_failure() {
             echo "Failure analysis failed. Verify Python 3 is installed."
             ;;
         pipeline/github_notify.py)
-            echo "GitHub notification failed. Verify GITHUB_TOKEN and Python 3."
+            echo "GitHub notification failed. Verify Python 3 is installed."
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+                echo "  GITHUB_TOKEN is set — check token permissions (issues:write scope)."
+            fi
             ;;
         pipeline/parse_logs.py)
             echo "Log parsing failed. Verify Python 3 is installed."
@@ -836,7 +849,10 @@ script_completion_failure() {
             echo "Image unpacking failed. Verify Python 3 is installed."
             ;;
         pipeline/upload.py)
-            echo "Upload failed. Verify GITHUB_TOKEN and Python 3."
+            echo "Upload failed. Verify Python 3 is installed."
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+                echo "  GITHUB_TOKEN is set — check token permissions (gist scope)."
+            fi
             ;;
         *)
             echo "Script failed (exit code $rc). Review the output above for details."
@@ -934,7 +950,11 @@ script_next_steps() {
             echo "  → Analysis complete. Review the output or post results via 'pipeline/github_notify.py'."
             ;;
         pipeline/github_notify.py)
-            echo "  → GitHub issue comment posted. Check the issue for the analysis results."
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+                echo "  → GitHub issue comment posted. Check the issue for the analysis results."
+            else
+                echo "  → Dry-run output printed. Set GITHUB_TOKEN to post to GitHub."
+            fi
             ;;
         pipeline/parse_logs.py)
             echo "  → Logs parsed. Continue with 'pipeline/build_table.py' to build the database."
@@ -955,7 +975,11 @@ script_next_steps() {
             echo "  → Images unpacked. Proceed with parsing or analysis of the extracted contents."
             ;;
         pipeline/upload.py)
-            echo "  → Bundle uploaded to GitHub Gist. Share the Gist URL with collaborators."
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+                echo "  → Bundle uploaded to GitHub Gist. Share the Gist URL with collaborators."
+            else
+                echo "  → Local summary displayed. Set GITHUB_TOKEN and re-run to upload."
+            fi
             ;;
         *)
             echo "  → Return to the menu to continue with the next step."
