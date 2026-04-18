@@ -800,6 +800,71 @@ adb reboot bootloader                  # then connect USB for fastboot
 
 ---
 
+## Elevated ADB access without root (Shizuku / LADB)
+
+**Shizuku** and **LADB** provide ADB shell-level (UID 2000) permissions
+on TARGET **without root**. This is higher than normal app permissions
+but lower than root (UID 0).
+
+### How it works
+
+These tools use Android 11+'s **Wireless Debugging** to start an
+ADB-privilege process on-device:
+
+| Tool | What it does | Install |
+|------|-------------|---------|
+| **[Shizuku](https://shizuku.rikka.app/)** | Runs a background service that grants ADB shell-level access to compatible apps via its API | [Google Play](https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api) / [GitHub](https://github.com/RikkaApps/Shizuku/releases) |
+| **[LADB](https://github.com/tytydraco/LADB)** | On-device ADB shell terminal — gives a command line with `shell` user privileges | [Google Play](https://play.google.com/store/apps/details?id=com.draco.ladb) / [GitHub](https://github.com/tytydraco/LADB/releases) |
+
+### What elevated access enables vs. root vs. standard
+
+| Capability | Standard ADB | Elevated (Shizuku/LADB) | Root (UID 0) |
+|-----------|:---:|:---:|:---:|
+| Read device properties (`getprop`) | ✓ | ✓ | ✓ |
+| Push/pull files to `/sdcard/` | ✓ | ✓ | ✓ |
+| Read `/proc/cpuinfo`, `/proc/meminfo` | ✓ | ✓ | ✓ |
+| Read `/proc/iomem` (full detail) | Partial | ✓ | ✓ |
+| Read `/proc/interrupts` (full detail) | Partial | ✓ | ✓ |
+| Full logcat (no PID filter) | ✗ | ✓ | ✓ |
+| Read `Settings.Secure`, `Settings.Global` | ✗ | ✓ | ✓ |
+| Run `pm` / `am` / `cmd` commands | ✗ | ✓ | ✓ |
+| Read more vendor/system files | Partial | ✓ | ✓ |
+| **DD partition block devices** | ✗ | ✗ | ✓ |
+| **Flash boot images** | ✗ | ✗ | ✓ (or fastboot) |
+| **Modify `/system`** | ✗ | ✗ | ✓ |
+
+### Setup via `host_flash.sh`
+
+```bash
+# Interactive Shizuku/LADB setup and detection:
+bash build/host_flash.sh --elevated-setup
+
+# The dump command auto-detects elevated access:
+bash build/host_flash.sh --dump
+# → Uses elevated access for better /proc, /sys, logcat collection
+```
+
+### Setting up Shizuku (step by step)
+
+1. **Enable Developer Options** on TARGET:
+   Settings → About phone → tap "Build number" 7 times
+2. **Enable Wireless Debugging** on TARGET:
+   Settings → Developer options → Wireless debugging → ON
+3. **Install Shizuku** on TARGET (Google Play or GitHub)
+4. **Start Shizuku**:
+   Open Shizuku app → "Start via Wireless debugging" → follow pairing
+5. **Verify**: `host_flash.sh --elevated-setup` will detect it automatically
+
+### Setting up LADB (step by step)
+
+1. **Enable Developer Options** and **Wireless Debugging** (same as above)
+2. **Install LADB** on TARGET (Google Play or GitHub)
+3. **Open LADB** → pair when prompted
+4. You now have an on-device ADB shell with elevated privileges
+5. Commands like `cat /proc/iomem` now return full output
+
+---
+
 ## Diagnostic dump from TARGET (with or without root)
 
 `host_flash.sh --dump` collects diagnostic and partition data from TARGET.
@@ -818,23 +883,24 @@ bash build/host_flash.sh -s 192.168.1.100:42456 --dump
 
 ### What the dump collects
 
-| Data | Without root | With root | Pipeline use |
-|------|:---:|:---:|---|
-| Device properties (`getprop`) | ✓ | ✓ | `parse_manifests.py` — board summary |
-| Partition layout (by-name links) | ✓ | ✓ | `failure_analysis.py` — partition check |
-| `/proc/cpuinfo`, `/proc/meminfo` | ✓ | ✓ | `build_table.py` — hardware catalog |
-| `/proc/iomem` | Partial | ✓ (full) | `build_table.py` — MMIO address map |
-| `/proc/interrupts` | Partial | ✓ | `build_table.py` — IRQ assignments |
-| Device tree (`/proc/device-tree`) | ✓ | ✓ | `build_table.py` — SoC peripheral map |
-| Loaded kernel modules | ✓ | ✓ | `build_table.py` — driver inventory |
-| VINTF manifests (vendor/system) | ✓ | ✓ | `parse_manifests.py` — HAL catalog |
-| `dumpsys` (display, audio, camera) | ✓ | ✓ | Manual analysis |
-| Build/security info summary | ✓ | ✓ | `failure_analysis.py` — version check |
-| **Boot/init_boot partition image** | ✗ | ✓ | `unpack_images.py` — kernel, ramdisk, fstab |
-| **dtbo partition image** | ✗ | ✓ | `unpack_images.py` — device tree overlays |
-| **vbmeta partition image** | ✗ | ✓ | Anti-rollback index, AVB chain analysis |
-| **SELinux policy binary** | ✗ | ✓ | Policy analysis, device-specific contexts |
-| **Full /proc/iomem** | ✗ | ✓ | Complete MMIO map (restricted without root) |
+| Data | Standard ADB | Elevated (Shizuku) | Root | Pipeline use |
+|------|:---:|:---:|:---:|---|
+| Device properties (`getprop`) | ✓ | ✓ | ✓ | `parse_manifests.py` — board summary |
+| Partition layout (by-name links) | ✓ | ✓ | ✓ | `failure_analysis.py` — partition check |
+| `/proc/cpuinfo`, `/proc/meminfo` | ✓ | ✓ | ✓ | `build_table.py` — hardware catalog |
+| `/proc/iomem` | Partial | ✓ | ✓ (full) | `build_table.py` — MMIO address map |
+| `/proc/interrupts` | Partial | ✓ | ✓ | `build_table.py` — IRQ assignments |
+| Device tree (`/proc/device-tree`) | ✓ | ✓ | ✓ | `build_table.py` — SoC peripheral map |
+| Loaded kernel modules | ✓ | ✓ | ✓ | `build_table.py` — driver inventory |
+| VINTF manifests (vendor/system) | ✓ | ✓ | ✓ | `parse_manifests.py` — HAL catalog |
+| `dumpsys` (display, audio, camera) | ✓ | ✓ | ✓ | Manual analysis |
+| Logcat (full, no PID filter) | ✗ | ✓ | ✓ | Debugging, issue reports |
+| Build/security info summary | ✓ | ✓ | ✓ | `failure_analysis.py` — version check |
+| **Boot/init_boot partition image** | ✗ | ✗ | ✓ | `unpack_images.py` — kernel, ramdisk, fstab |
+| **dtbo partition image** | ✗ | ✗ | ✓ | `unpack_images.py` — device tree overlays |
+| **vbmeta partition image** | ✗ | ✗ | ✓ | Anti-rollback index, AVB chain analysis |
+| **SELinux policy binary** | ✗ | ✗ | ✓ | Policy analysis, device-specific contexts |
+| **Full /proc/iomem (root DD)** | ✗ | ✗ | ✓ | Complete MMIO map with block device access |
 
 ### What you can do with partition dumps
 

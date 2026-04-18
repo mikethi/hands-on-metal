@@ -90,6 +90,224 @@ ok()    { printf "%s  ✓  %s%s\n" "$CLR_GREEN"  "$1" "$CLR_RESET"; }
 # Target-prefixed messages (cyan ▸) to distinguish from host (green ℹ)
 tgt()   { printf "%s  ▸  [TARGET] %s%s\n" "$CLR_CYAN" "$1" "$CLR_RESET"; }
 
+# ── Debugging enable instructions ────────────────────────────
+# Shows step-by-step instructions for enabling Developer Options
+# and USB/wireless debugging on the TARGET device.
+
+_show_debug_enable_instructions() {
+    local mode="${1:-usb}"  # "usb" or "wireless" or "both"
+    echo ""
+    echo "  ${CLR_YELLOW}┌──────────────────────────────────────────────────────────────┐${CLR_RESET}"
+    echo "  ${CLR_YELLOW}│  How to enable ADB debugging on TARGET device               │${CLR_RESET}"
+    echo "  ${CLR_YELLOW}└──────────────────────────────────────────────────────────────┘${CLR_RESET}"
+    echo ""
+    echo "  Step 1: Enable Developer Options (if not already visible)"
+    echo "    On TARGET: Settings → About phone → tap 'Build number' 7 times"
+    echo "    You will see: 'You are now a developer!'"
+    echo ""
+    if [ "$mode" = "usb" ] || [ "$mode" = "both" ]; then
+        echo "  Step 2: Enable USB debugging"
+        echo "    On TARGET: Settings → Developer options (or System → Developer options)"
+        echo "      → Toggle ON: 'USB debugging'"
+        echo "    When you connect the USB cable, TARGET will prompt:"
+        echo "      'Allow USB debugging?' → tap 'Allow' (check 'Always allow' for this HOST)"
+        echo ""
+    fi
+    if [ "$mode" = "wireless" ] || [ "$mode" = "both" ]; then
+        echo "  Step 2: Enable Wireless debugging (Android 11+)"
+        echo "    On TARGET: Settings → Developer options"
+        echo "      → Toggle ON: 'Wireless debugging'"
+        echo "      → Tap 'Pair device with pairing code' to get the code"
+        echo ""
+    fi
+    echo "  ${CLR_CYAN}Note: Developer options may be under Settings → System → Developer options${CLR_RESET}"
+    echo "  ${CLR_CYAN}      on some devices, or Settings → Additional settings → Developer options.${CLR_RESET}"
+    echo ""
+}
+
+# ── Elevated ADB tools (Shizuku / LADB) ─────────────────────
+# Shizuku and LADB provide ADB shell-level (UID 2000) permissions
+# on-device WITHOUT root. This is higher than normal app permissions
+# but lower than root (UID 0).
+#
+# Shizuku: runs an ADB-privilege process that grants shell-level
+#   access to other apps via its API. Requires wireless debugging
+#   (Android 11+) or USB ADB to start.
+#   https://shizuku.rikka.app/
+#
+# LADB: on-device ADB shell app — gives a terminal with shell-user
+#   privileges. Uses wireless debugging internally.
+#   https://github.com/tytydraco/LADB
+#
+# What elevated (shell-level, UID 2000) access enables:
+#   ✓ Read more /proc and /sys files (iomem, interrupts, etc.)
+#   ✓ Run pm (package manager), am (activity manager) commands
+#   ✓ Access Settings.Secure, Settings.Global databases
+#   ✓ Read logcat without filtering
+#   ✓ Better access to /vendor and /system files
+#   ✗ CANNOT dd partition block devices (needs UID 0 / root)
+#   ✗ CANNOT write to /dev/block/ (needs root)
+#   ✗ CANNOT flash boot images (needs root or fastboot)
+#
+# For hands-on-metal, elevated access improves data collection
+# quality significantly even without root.
+
+# Detect if Shizuku is running on TARGET
+_check_shizuku() {
+    if _adb shell "pm list packages 2>/dev/null" | grep -q "moe.shizuku.privileged.api"; then
+        if _adb shell "dumpsys activity services moe.shizuku.privileged.api 2>/dev/null" | grep -q "ServiceRecord"; then
+            echo "running"
+            return 0
+        fi
+        echo "installed"
+        return 0
+    fi
+    echo "not_installed"
+    return 1
+}
+
+# Detect if LADB is installed on TARGET
+_check_ladb() {
+    if _adb shell "pm list packages 2>/dev/null" | grep -q "com.draco.ladb"; then
+        echo "installed"
+        return 0
+    fi
+    echo "not_installed"
+    return 1
+}
+
+# Show instructions for setting up Shizuku or LADB
+_show_elevated_setup_instructions() {
+    echo ""
+    echo "  ${CLR_YELLOW}┌──────────────────────────────────────────────────────────────┐${CLR_RESET}"
+    echo "  ${CLR_YELLOW}│  Elevated ADB tools — shell-level access without root       │${CLR_RESET}"
+    echo "  ${CLR_YELLOW}└──────────────────────────────────────────────────────────────┘${CLR_RESET}"
+    echo ""
+    echo "  These tools provide ADB shell-level (UID 2000) permissions on TARGET"
+    echo "  WITHOUT root. They improve data collection quality significantly."
+    echo ""
+    echo "  ${CLR_CYAN}Option 1: Shizuku (recommended — grants elevated access to apps)${CLR_RESET}"
+    echo "    1. Install Shizuku from Google Play or GitHub:"
+    echo "       https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api"
+    echo "       https://github.com/RikkaApps/Shizuku/releases"
+    echo "    2. Enable Wireless debugging on TARGET:"
+    echo "       Settings → Developer options → Wireless debugging → ON"
+    echo "    3. Open Shizuku app → tap 'Start via Wireless debugging'"
+    echo "       → Follow the pairing steps in the app"
+    echo "    4. Shizuku now provides elevated access to compatible apps"
+    echo ""
+    echo "  ${CLR_CYAN}Option 2: LADB (on-device ADB shell terminal)${CLR_RESET}"
+    echo "    1. Install LADB from Google Play or GitHub:"
+    echo "       https://play.google.com/store/apps/details?id=com.draco.ladb"
+    echo "       https://github.com/tytydraco/LADB/releases"
+    echo "    2. Enable Wireless debugging on TARGET"
+    echo "    3. Open LADB → pair when prompted"
+    echo "    4. You now have an ADB shell with elevated (shell user) privileges"
+    echo ""
+    echo "  ${CLR_GREEN}What elevated access enables for hands-on-metal:${CLR_RESET}"
+    echo "    ✓ Better /proc and /sys reads (iomem, interrupts without restriction)"
+    echo "    ✓ Full logcat access (no PID filtering)"
+    echo "    ✓ Package manager and activity manager commands"
+    echo "    ✓ Access to more vendor/system files for VINTF manifest collection"
+    echo "    ✓ Settings database reads (Settings.Secure, Settings.Global)"
+    echo ""
+    echo "  ${CLR_YELLOW}What elevated access still CANNOT do:${CLR_RESET}"
+    echo "    ✗ Read/write partition block devices (dd /dev/block/*) — needs root"
+    echo "    ✗ Flash boot images — needs root (Mode A/B) or fastboot (Mode C)"
+    echo "    ✗ Modify system partition — needs root"
+    echo ""
+}
+
+# Run elevated-aware dump — uses shell-level access if available
+run_elevated_setup() {
+    echo ""
+    echo "═══════════════════════════════════════════════════════"
+    echo "  Elevated ADB Setup — Shizuku / LADB"
+    echo "═══════════════════════════════════════════════════════"
+    echo ""
+    info "HOST: $HOM_HOST_OS"
+
+    # Check TARGET connection
+    if check_device_adb; then
+        if [ -z "$HOM_TARGET_SERIAL" ]; then
+            _resolve_target_serial adb
+        fi
+        _identify_target_adb
+        _print_target_banner
+    else
+        warn "No TARGET connected. Connect first via USB or WiFi ADB."
+        _show_debug_enable_instructions "both"
+        return 1
+    fi
+
+    # Detect current state
+    local shizuku_state ladb_state
+    shizuku_state=$(_check_shizuku 2>/dev/null || echo "not_installed")
+    ladb_state=$(_check_ladb 2>/dev/null || echo "not_installed")
+
+    echo "  Current state on TARGET:"
+    case "$shizuku_state" in
+        running)       echo "    Shizuku: ${CLR_GREEN}✓ running${CLR_RESET}" ;;
+        installed)     echo "    Shizuku: ${CLR_YELLOW}● installed (not started)${CLR_RESET}" ;;
+        not_installed) echo "    Shizuku: ${CLR_RED}✗ not installed${CLR_RESET}" ;;
+    esac
+    case "$ladb_state" in
+        installed)     echo "    LADB:    ${CLR_GREEN}✓ installed${CLR_RESET}" ;;
+        not_installed) echo "    LADB:    ${CLR_RED}✗ not installed${CLR_RESET}" ;;
+    esac
+    echo ""
+
+    if [ "$shizuku_state" = "running" ]; then
+        ok "Shizuku is already running on TARGET."
+        echo "  Elevated data collection is available. Run:"
+        echo "    bash build/host_flash.sh --dump"
+        echo ""
+        echo "  The dump command will automatically use elevated access"
+        echo "  for improved /proc, /sys, and vendor file collection."
+    elif [ "$shizuku_state" = "installed" ]; then
+        info "Shizuku is installed but not started."
+        echo ""
+        echo "  On TARGET: open Shizuku app → tap 'Start'"
+        echo "  If wireless debugging method:"
+        echo "    Shizuku → 'Start via Wireless debugging' → follow pairing steps"
+        echo "  If connected via USB ADB:"
+        echo "    Shizuku → 'Start via connected ADB' (auto-detected)"
+        echo ""
+        read -r -p "  Press Enter when Shizuku is started on TARGET..."
+        local new_state
+        new_state=$(_check_shizuku 2>/dev/null || echo "not_installed")
+        if [ "$new_state" = "running" ]; then
+            ok "Shizuku is now running. Elevated access available."
+        else
+            warn "Shizuku still not detected as running. You can try again later."
+        fi
+    else
+        _show_elevated_setup_instructions
+
+        echo "  Would you like to:"
+        echo "    1) Continue without elevated access (standard ADB)"
+        echo "    2) I've installed Shizuku/LADB — check again"
+        echo ""
+        read -r -p "  Choose [1/2]: " elevated_choice
+        if [ "$elevated_choice" = "2" ]; then
+            shizuku_state=$(_check_shizuku 2>/dev/null || echo "not_installed")
+            if [ "$shizuku_state" = "running" ]; then
+                ok "Shizuku detected and running!"
+            elif [ "$shizuku_state" = "installed" ]; then
+                info "Shizuku installed. Start it from the app, then run --dump."
+            else
+                info "No elevated tools detected. Continuing with standard ADB access."
+            fi
+        fi
+    fi
+
+    echo ""
+    echo "  Next steps:"
+    echo "    • Run 'bash build/host_flash.sh --dump' for data collection"
+    echo "    • Run 'bash build/host_flash.sh --wifi-setup' if not connected yet"
+    echo ""
+}
+
 # ── Target device serial ─────────────────────────────────────
 # If set, all adb/fastboot commands are routed to this device.
 # Set via -s <serial> option.
@@ -323,6 +541,17 @@ check_host_prereqs() {
 
     ok "Host tools found: adb $(adb version 2>/dev/null | head -1 | awk '{print $NF}'), fastboot $(fastboot --version 2>/dev/null | head -1 | awk '{print $NF}')"
 
+    # Check if any TARGET device is connected
+    if ! check_device_adb && ! check_device_fastboot; then
+        echo ""
+        warn "No TARGET device detected."
+        echo ""
+        echo "  ${CLR_YELLOW}Before connecting, make sure debugging is enabled on TARGET:${CLR_RESET}"
+        _show_debug_enable_instructions "both"
+        echo "  Then connect TARGET via USB cable, USB OTG, or wireless ADB."
+        echo ""
+    fi
+
     # Platform-specific USB permission check
     if [ "$HOM_HOST_OS" = "linux" ]; then
         # Check if user can access USB devices (common Linux issue)
@@ -425,6 +654,8 @@ wait_for_device() {
             warn "TARGET device not found. Check USB connection and debugging settings."
             ;;
     esac
+    # Always show debugging enable instructions on failure
+    _show_debug_enable_instructions "$mode"
     return 1
 }
 
@@ -723,15 +954,31 @@ run_dump() {
 
     mkdir -p "$dump_dir"
 
-    # Detect root availability on TARGET
+    # Detect root and elevated (Shizuku/shell-level) access on TARGET
     local has_root=false
+    local has_elevated=false
     if _adb shell "su -c 'id'" 2>/dev/null | grep -q 'uid=0'; then
         has_root=true
-        ok "TARGET has root access — full partition dumps available"
+        has_elevated=true
+        ok "TARGET has root access (UID 0) — full partition dumps available"
+    elif _adb shell "id" 2>/dev/null | grep -q 'uid=2000\|shell'; then
+        has_elevated=true
+        ok "TARGET has elevated ADB shell access (UID 2000)"
+        echo "    Enhanced /proc, /sys, logcat collection available."
+        echo "    Partition image dumps still require root."
+        # Check for Shizuku
+        local shizuku_state
+        shizuku_state=$(_check_shizuku 2>/dev/null || echo "not_installed")
+        if [ "$shizuku_state" = "running" ]; then
+            ok "Shizuku is running — elevated app-level access available"
+        fi
     else
-        warn "TARGET has NO root — limited to non-root accessible data"
+        warn "TARGET has NO root and NO elevated access"
         echo "    Partition image dumps (dd) require root."
-        echo "    Properties, /proc, VINTF manifests, and dumpsys are still available."
+        echo "    Properties, VINTF manifests, and dumpsys are still available."
+        echo ""
+        echo "    ${CLR_CYAN}Tip: Install Shizuku or LADB on TARGET for better data collection${CLR_RESET}"
+        echo "    ${CLR_CYAN}     without root. Run: bash build/host_flash.sh --elevated-setup${CLR_RESET}"
     fi
 
     echo ""
@@ -766,12 +1013,41 @@ run_dump() {
             ok "  proc/$f" || true
     done
 
-    # iomem and interrupts may be restricted without root
-    _adb shell "cat /proc/iomem 2>/dev/null" > "$dump_dir/proc/iomem" 2>/dev/null || true
-    [ -s "$dump_dir/proc/iomem" ] && ok "  proc/iomem" || warn "  proc/iomem (restricted without root)"
+    # iomem and interrupts — restricted without root/elevated access
+    # With elevated (UID 2000) or root: full content available
+    # Without: may be empty or show only partial data
+    if [ "$has_root" = true ]; then
+        _adb shell "su -c 'cat /proc/iomem'" > "$dump_dir/proc/iomem" 2>/dev/null || true
+        _adb shell "su -c 'cat /proc/interrupts'" > "$dump_dir/proc/interrupts" 2>/dev/null || true
+    else
+        _adb shell "cat /proc/iomem 2>/dev/null" > "$dump_dir/proc/iomem" 2>/dev/null || true
+        _adb shell "cat /proc/interrupts 2>/dev/null" > "$dump_dir/proc/interrupts" 2>/dev/null || true
+    fi
+    if [ -s "$dump_dir/proc/iomem" ]; then
+        ok "  proc/iomem"
+    else
+        if [ "$has_elevated" = true ]; then
+            warn "  proc/iomem (restricted — elevated access insufficient on this device)"
+        else
+            warn "  proc/iomem (restricted — use Shizuku/LADB or root for full data)"
+        fi
+    fi
+    if [ -s "$dump_dir/proc/interrupts" ]; then
+        ok "  proc/interrupts"
+    else
+        if [ "$has_elevated" = true ]; then
+            warn "  proc/interrupts (restricted — elevated access insufficient)"
+        else
+            warn "  proc/interrupts (restricted — use Shizuku/LADB or root for full data)"
+        fi
+    fi
 
-    _adb shell "cat /proc/interrupts 2>/dev/null" > "$dump_dir/proc/interrupts" 2>/dev/null || true
-    [ -s "$dump_dir/proc/interrupts" ] && ok "  proc/interrupts" || warn "  proc/interrupts (restricted without root)"
+    # logcat — better with elevated/shell access (no PID filter)
+    if [ "$has_elevated" = true ] || [ "$has_root" = true ]; then
+        tgt "Collecting logcat (elevated access — no PID filter)..."
+        _adb logcat -d -v threadtime > "$dump_dir/logcat.txt" 2>/dev/null || true
+        [ -s "$dump_dir/logcat.txt" ] && ok "  logcat.txt (full)" || warn "  logcat failed"
+    fi
 
     # ── 4. Device tree (readable on many devices without root)
     tgt "Collecting device tree..."
@@ -1345,6 +1621,9 @@ show_menu() {
     echo "    5) Dump — Collect diagnostic data from TARGET"
     echo "           Works with or without root. Feeds into the pipeline."
     echo ""
+    echo "    6) Elevated setup — Install Shizuku/LADB for enhanced access"
+    echo "           ADB shell-level (UID 2000) without root. Better data collection."
+    echo ""
 
     if [ -n "$zip" ]; then
         echo "  ${CLR_GREEN}Recovery ZIP found (on HOST): $(basename "$zip")${CLR_RESET}"
@@ -1356,13 +1635,14 @@ show_menu() {
     echo "    q) Back to main menu"
     echo ""
 
-    read -r -p "  Choose [1/2/3/4/5/q]: " choice
+    read -r -p "  Choose [1/2/3/4/5/6/q]: " choice
     case "$choice" in
         1) run_c1 ;;
         2) run_c2 ;;
         3) run_c3 ;;
         4) run_wifi_setup ;;
         5) run_dump ;;
+        6) run_elevated_setup ;;
         q|Q) return 0 ;;
         *) warn "Invalid choice"; show_menu ;;
     esac
@@ -1395,26 +1675,32 @@ main() {
         --c3) shift; check_host_prereqs; run_c3 "$@" ;;
         --wifi-setup) shift; check_host_prereqs; run_wifi_setup "$@" ;;
         --dump) shift; check_host_prereqs; run_dump "$@" ;;
+        --elevated-setup) shift; check_host_prereqs; run_elevated_setup "$@" ;;
         --help|-h)
             echo "Usage: bash build/host_flash.sh [-s SERIAL] [COMMAND]"
             echo ""
             echo "  Flashes, diagnoses, or dumps a TARGET device from this HOST."
             echo ""
             echo "  Commands:"
-            echo "  --c1 TWRP_IMG    Temporarily boot TWRP on TARGET, then sideload"
-            echo "  --c2 PATCHED_IMG Flash pre-patched boot image to TARGET via fastboot"
-            echo "  --c3 ZIP         ADB sideload recovery ZIP to TARGET in TWRP"
-            echo "  --wifi-setup     Pair and connect to TARGET over wireless ADB (no root needed)"
-            echo "  --dump [DIR]     Collect diagnostic/partition data from TARGET"
+            echo "  --c1 TWRP_IMG      Temporarily boot TWRP on TARGET, then sideload"
+            echo "  --c2 PATCHED_IMG   Flash pre-patched boot image to TARGET via fastboot"
+            echo "  --c3 ZIP           ADB sideload recovery ZIP to TARGET in TWRP"
+            echo "  --wifi-setup       Pair and connect to TARGET over wireless ADB (no root needed)"
+            echo "  --dump [DIR]       Collect diagnostic/partition data from TARGET"
+            echo "  --elevated-setup   Set up Shizuku/LADB for enhanced non-root access on TARGET"
             echo ""
             echo "  Options:"
-            echo "  -s SERIAL        Target a specific device by serial number"
-            echo "                   (required when multiple devices are connected)"
+            echo "  -s SERIAL          Target a specific device by serial number"
+            echo "                     (required when multiple devices are connected)"
             echo ""
             echo "  No arguments: show interactive menu"
             echo ""
             echo "  HOST   = this machine ($(uname -s)/$(uname -m))"
             echo "  TARGET = the device being flashed (connected via USB/OTG/wireless)"
+            echo ""
+            echo "  Prerequisite: Enable USB debugging on TARGET:"
+            echo "    Settings → About phone → tap 'Build number' 7 times"
+            echo "    Settings → Developer options → USB debugging → ON"
             ;;
         *)  show_menu ;;
     esac
