@@ -120,7 +120,9 @@ fi
 
 log "=== hands-on-metal collect.sh start ==="
 _HOM_IS_ROOT=false
-[ "$(id -u 2>/dev/null || echo 1)" -eq 0 ] 2>/dev/null && _HOM_IS_ROOT=true
+if [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then
+    _HOM_IS_ROOT=true
+fi
 if [ "$_HOM_IS_ROOT" = false ]; then
     log "[INFO ] Running WITHOUT root — some data sources will be skipped"
     log "[INFO ] Root-only: dmesg, /sys/kernel/debug/pinctrl, block device DD,"
@@ -149,7 +151,7 @@ fi
 log "Collecting lsmod / modinfo..."
 lsmod > "$OUT/lsmod.txt" 2>/dev/null && echo "lsmod.txt" >> "$MANIFEST"
 if [ "$_HOM_IS_ROOT" = true ]; then
-    lsmod 2>/dev/null | awk 'NR>1{print $1}' | while IFS= read -r mod; do
+    awk 'NR>1{print $1}' "$OUT/lsmod.txt" 2>/dev/null | while IFS= read -r mod; do
         modinfo "$mod" >> "$OUT/modinfo.txt" 2>/dev/null
     done
 else
