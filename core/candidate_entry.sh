@@ -23,9 +23,9 @@ SCRIPT_NAME="${SCRIPT_NAME:-candidate_entry}"
 OUT="${OUT:-/sdcard/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 CANDIDATE_DIR="$OUT/candidates"
-_HOM_BASE_ROOT="${REPO_ROOT:-${MODPATH:-}}"
-if [ -n "$_HOM_BASE_ROOT" ]; then
-    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_BASE_ROOT/build/partition_index.json}"
+_HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"
+if [ -n "$_HOM_RESOLVED_ROOT" ]; then
+    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_RESOLVED_ROOT/build/partition_index.json}"
 else
     case "$0" in
         */*) _HOM_REPO_ROOT_FALLBACK="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)" ;;
