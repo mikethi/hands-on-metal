@@ -670,6 +670,67 @@ _is_google_device_supported() {
     [ "$in_section" -gt 0 ]
 }
 
+# Extract the full standard boot-chain partition image set from an
+# already-extracted inner image-*.zip into "$BOOT_WORK_DIR/partitions/".
+#
+# This complements the single Magisk-target image returned by
+# _download_factory_boot_image: callers still get back the one image
+# they need to patch, but the user also ends up with boot.img,
+# init_boot.img, vendor_boot.img, dtbo.img, vbmeta*.img and
+# recovery.img on disk for flashing / recovery / inspection.
+#
+# Writes ONLY to stderr (via ux_print / log_info) so it is safe to
+# call from inside a function whose stdout is captured via $(...).
+#
+# Usage: _extract_all_partitions_from_inner_zip <inner_zip_path>
+_extract_all_partitions_from_inner_zip() {
+    local inner_zip_path="$1"
+    [ -f "$inner_zip_path" ] || return 1
+    _has_cmd unzip || return 1
+
+    local part_dir="$BOOT_WORK_DIR/partitions"
+    mkdir -p "$part_dir" 2>/dev/null || return 1
+
+    # Standard boot-chain images shipped in Google factory inner ZIPs.
+    # Not every image is present on every device / firmware — missing
+    # entries are tolerated silently.
+    local candidates="boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img vbmeta_system.img vbmeta_vendor.img recovery.img"
+
+    # Listing once is cheaper than probing each name with unzip.
+    local listing
+    listing=$(unzip -l "$inner_zip_path" 2>/dev/null || true)
+    [ -n "$listing" ] || return 1
+
+    local extracted_count=0
+    local extracted_names=""
+    local img
+    for img in $candidates; do
+        # Match the image name as a whole token in the listing
+        # (avoids false hits like "boot.img.lz4" when only boot.img
+        # was asked for).
+        if printf '%s\n' "$listing" | grep -Eq "[[:space:]]${img}\$"; then
+            if unzip -joq "$inner_zip_path" "$img" \
+                    -d "$part_dir" 2>/dev/null \
+                    && [ -s "$part_dir/$img" ]; then
+                extracted_count=$((extracted_count + 1))
+                extracted_names="$extracted_names $img"
+                log_info "Extracted partition image: $img -> $part_dir/$img"
+            else
+                log_warn "Failed to extract $img from inner ZIP"
+            fi
+        fi
+    done
+
+    if [ "$extracted_count" -gt 0 ]; then
+        ux_print "  ✓  Extracted $extracted_count partition image(s) to $part_dir"
+        ux_print "    ${extracted_names# }"
+        return 0
+    fi
+
+    log_warn "No standard partition images found inside inner ZIP"
+    return 1
+}
+
 _download_factory_boot_image() {
     local codename="$1" boot_part="$2" build_id="$3" local_zip="${4:-}"
 
@@ -741,7 +802,7 @@ _download_factory_boot_image() {
     if [ -z "$inner_zip" ]; then
         # Some factory ZIPs place boot.img directly at the top level
         log_info "No inner image-*.zip found; trying direct extraction"
-        if unzip -jo "$factory_zip" "*/${boot_part}.img" \
+        if unzip -joq "$factory_zip" "*/${boot_part}.img" \
                 -d "$extract_dir" 2>/dev/null; then
             local found="$extract_dir/${boot_part}.img"
             if [ -f "$found" ] && [ -s "$found" ]; then
@@ -792,7 +853,7 @@ _download_factory_boot_image() {
         ux_print "  ✓  Build match: $inner_build"
     fi
 
-    unzip -jo "$factory_zip" "$inner_zip" -d "$extract_dir" 2>/dev/null || {
+    unzip -joq "$factory_zip" "$inner_zip" -d "$extract_dir" 2>/dev/null || {
         log_warn "Failed to extract inner ZIP from factory image"
         [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
         rm -rf "$extract_dir"
@@ -803,11 +864,15 @@ _download_factory_boot_image() {
     inner_zip_path="$extract_dir/$(basename "$inner_zip")"
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
-    if unzip -jo "$inner_zip_path" "${boot_part}.img" \
+    if unzip -joq "$inner_zip_path" "${boot_part}.img" \
             -d "$extract_dir" 2>/dev/null; then
         local target_img="$extract_dir/${boot_part}.img"
         if [ -f "$target_img" ] && [ -s "$target_img" ]; then
             ux_print "  ✓  Extracted ${boot_part}.img from factory image"
+            # Also extract the rest of the standard boot-chain images
+            # (boot, init_boot, vendor_boot, dtbo, vbmeta*, recovery)
+            # into BOOT_WORK_DIR/partitions/ for flashing / recovery.
+            _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
             echo "$target_img"
             [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
             rm -f "$inner_zip_path"
@@ -822,11 +887,12 @@ _download_factory_boot_image() {
         ux_print "  ⚠  init_boot.img not present in this factory image."
         ux_print "     This firmware may pre-date Android 13 / API 33."
         ux_print "     Falling back to boot.img."
-        if unzip -jo "$inner_zip_path" "boot.img" \
+        if unzip -joq "$inner_zip_path" "boot.img" \
                 -d "$extract_dir" 2>/dev/null; then
             local fallback_img="$extract_dir/boot.img"
             if [ -f "$fallback_img" ] && [ -s "$fallback_img" ]; then
                 ux_print "  ✓  Extracted boot.img as fallback"
+                _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
                 echo "$fallback_img"
                 [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
                 rm -f "$inner_zip_path"
