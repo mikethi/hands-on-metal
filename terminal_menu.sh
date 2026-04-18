@@ -328,25 +328,67 @@ build_script_index() {
     SCRIPT_PATHS=()
     SCRIPT_TYPES=()
 
-    local path rel
-    while IFS= read -r path; do
-        rel="${path#"$REPO_ROOT"/}"
-        SCRIPT_LABELS+=("$rel")
-        SCRIPT_PATHS+=("$path")
-        SCRIPT_TYPES+=("shell")
-    done < <(find \
-        "$REPO_ROOT/build" \
-        "$REPO_ROOT/core" \
-        "$REPO_ROOT/magisk-module" \
-        "$REPO_ROOT/recovery-zip" \
-        -type f -name "*.sh" | sort)
+    # Workflow-ordered list: first-to-run at the top, last at the bottom.
+    # Phase 1: Setup & Build
+    # Phase 2: Environment & Device Detection
+    # Phase 3: Boot Image & Pre-patch Analysis
+    # Phase 4: Patch & Flash
+    # Phase 5: Module Installation & Data Collection
+    # Phase 6: Analysis Pipeline
+    # Phase 7: Reporting & Sharing
+    # Phase 8: Utility / Framework (always runnable)
+    local _ordered_scripts=(
+        # ── Phase 1: Setup & Build ────────────────────────────
+        "shell:build/fetch_all_deps.sh"
+        "shell:build/build_offline_zip.sh"
+        # ── Phase 2: Environment & Device Detection ───────────
+        "shell:magisk-module/env_detect.sh"
+        "shell:core/device_profile.sh"
+        # ── Phase 3: Boot Image & Pre-patch Analysis ──────────
+        "shell:core/boot_image.sh"
+        "shell:core/anti_rollback.sh"
+        "shell:core/candidate_entry.sh"
+        "shell:core/apply_defaults.sh"
+        # ── Phase 4: Patch & Flash ────────────────────────────
+        "shell:core/magisk_patch.sh"
+        "shell:core/flash.sh"
+        # ── Phase 5: Module Installation & Data Collection ────
+        "shell:magisk-module/customize.sh"
+        "shell:magisk-module/service.sh"
+        "shell:magisk-module/collect.sh"
+        "shell:recovery-zip/collect_recovery.sh"
+        "shell:magisk-module/setup_termux.sh"
+        # ── Phase 6: Analysis Pipeline ────────────────────────
+        "python:pipeline/parse_logs.py"
+        "python:pipeline/parse_manifests.py"
+        "python:pipeline/parse_pinctrl.py"
+        "python:pipeline/parse_symbols.py"
+        "python:pipeline/unpack_images.py"
+        "python:pipeline/build_table.py"
+        # ── Phase 7: Reporting & Sharing ──────────────────────
+        "python:pipeline/report.py"
+        "python:pipeline/failure_analysis.py"
+        "shell:core/share.sh"
+        "python:pipeline/upload.py"
+        "python:pipeline/github_notify.py"
+        "shell:build/host_flash.sh"
+        # ── Phase 8: Utility / Framework ──────────────────────
+        "shell:core/logging.sh"
+        "shell:core/ux.sh"
+        "shell:core/privacy.sh"
+        "shell:core/state_machine.sh"
+    )
 
-    while IFS= read -r path; do
-        rel="${path#"$REPO_ROOT"/}"
-        SCRIPT_LABELS+=("$rel")
-        SCRIPT_PATHS+=("$path")
-        SCRIPT_TYPES+=("python")
-    done < <(find "$REPO_ROOT/pipeline" -maxdepth 1 -type f -name "*.py" | sort)
+    local entry kind rel
+    for entry in "${_ordered_scripts[@]}"; do
+        kind="${entry%%:*}"
+        rel="${entry#*:}"
+        if [ -f "$REPO_ROOT/$rel" ]; then
+            SCRIPT_LABELS+=("$rel")
+            SCRIPT_PATHS+=("$REPO_ROOT/$rel")
+            SCRIPT_TYPES+=("$kind")
+        fi
+    done
 }
 
 # ── Prerequisite status cache (rebuilt per print) ─────────────
@@ -795,8 +837,23 @@ script_completion_failure() {
         core/flash.sh)
             echo "Flash failed. Ensure root access and a valid patched boot image."
             ;;
+        core/logging.sh)
+            echo "Logging framework failed to load. Check file permissions and available disk space."
+            ;;
         core/magisk_patch.sh)
             echo "Magisk patching failed. Ensure the boot image and Magisk binary are available."
+            ;;
+        core/privacy.sh)
+            echo "Privacy helpers failed to load. Check file permissions."
+            ;;
+        core/share.sh)
+            echo "Share bundle creation failed. Ensure env_registry.sh exists and is readable."
+            ;;
+        core/state_machine.sh)
+            echo "State machine framework failed to load. Check file permissions."
+            ;;
+        core/ux.sh)
+            echo "UX helpers failed to load. Ensure core/logging.sh was sourced first."
             ;;
         magisk-module/collect.sh)
             echo "Data collection failed. Ensure you are on an Android device."
@@ -1014,11 +1071,44 @@ run_selected() {
                 python3 "$script"
             fi
         else
-            if [ "${#args_array[@]}" -gt 0 ]; then
-                bash "$script" "${args_array[@]}"
-            else
-                bash "$script"
-            fi
+            # Core scripts define functions (run_*) that require
+            # logging.sh and ux.sh to be sourced first.  When run
+            # from the menu we source the framework, then source
+            # the target script, and call its main function.
+            case "$rel" in
+                core/anti_rollback.sh|core/apply_defaults.sh|\
+                core/boot_image.sh|core/candidate_entry.sh|\
+                core/device_profile.sh|core/flash.sh|\
+                core/magisk_patch.sh|core/share.sh)
+                    # Source framework scripts
+                    SCRIPT_NAME="${rel##*/}"; SCRIPT_NAME="${SCRIPT_NAME%.sh}"
+                    export SCRIPT_NAME
+                    source "$REPO_ROOT/core/logging.sh"
+                    source "$REPO_ROOT/core/ux.sh"
+                    source "$REPO_ROOT/core/privacy.sh" 2>/dev/null || true
+                    # Source the target script (defines its functions)
+                    source "$script"
+                    # Call the appropriate main function
+                    case "$rel" in
+                        core/anti_rollback.sh)  run_anti_rollback_check "${args_array[@]}" ;;
+                        core/apply_defaults.sh) run_apply_defaults "${args_array[@]}" ;;
+                        core/boot_image.sh)     run_boot_image_acquire "${args_array[@]}" ;;
+                        core/candidate_entry.sh) run_candidate_entry "${args_array[@]}" ;;
+                        core/device_profile.sh) run_device_profile "${args_array[@]}" ;;
+                        core/flash.sh)          run_flash_magisk_path "${args_array[@]}" ;;
+                        core/magisk_patch.sh)   run_magisk_patch "${args_array[@]}" ;;
+                        core/share.sh)          run_share "${args_array[@]}" ;;
+                    esac
+                    ;;
+                *)
+                    # All other shell scripts run inline (build/*, magisk-module/*, etc.)
+                    if [ "${#args_array[@]}" -gt 0 ]; then
+                        bash "$script" "${args_array[@]}"
+                    else
+                        bash "$script"
+                    fi
+                    ;;
+            esac
         fi
     )
     local rc=$?
