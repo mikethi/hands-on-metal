@@ -236,9 +236,11 @@ else
 
         # Print expected ARM64 hint (file may not be available on all hosts)
         if command -v file >/dev/null 2>&1; then
-            file "$TOOLS_DIR/magisk64" 2>/dev/null | grep -i "ELF" && \
-                ok "magisk64 verified: ELF binary" || \
+            if file "$TOOLS_DIR/magisk64" 2>/dev/null | grep -qi "ELF"; then
+                ok "magisk64 verified: ELF binary"
+            else
                 warn "magisk64: could not verify ELF type (may be ARM64 on x86 host)"
+            fi
         fi
     fi
 fi

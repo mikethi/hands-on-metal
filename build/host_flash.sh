@@ -493,7 +493,7 @@ _install_instructions() {
             echo "       https://developer.android.com/studio/run/oem-usb"
             echo ""
             echo "  If using Git Bash/MSYS2, run this script from there."
-            echo "  If using PowerShell/CMD, use .\\adb.exe and .\\fastboot.exe instead."
+            printf '  If using PowerShell/CMD, use .\\adb.exe and .\\fastboot.exe instead.\n'
             ;;
         termux)
             echo "  Install Android Platform Tools in Termux:"
@@ -1027,8 +1027,11 @@ run_dump() {
 
     # ── 1. Device properties (no root needed) ────────────────
     tgt "Collecting device properties..."
-    _adb shell getprop > "$dump_dir/getprop.txt" 2>/dev/null && \
-        ok "  getprop.txt" || warn "  getprop failed"
+    if _adb shell getprop > "$dump_dir/getprop.txt" 2>/dev/null; then
+        ok "  getprop.txt"
+    else
+        warn "  getprop failed"
+    fi
 
     # ── 2. Partition layout (symlinks only without root) ────
     # Without root: ls shows symlinks (partition names → block device nodes)
@@ -1062,8 +1065,9 @@ run_dump() {
     tgt "Collecting /proc data..."
     mkdir -p "$dump_dir/proc"
     for f in cpuinfo meminfo cmdline version mounts filesystems; do
-        _adb shell "cat /proc/$f 2>/dev/null" > "$dump_dir/proc/$f" 2>/dev/null && \
-            ok "  proc/$f" || true
+        if _adb shell "cat /proc/$f 2>/dev/null" > "$dump_dir/proc/$f" 2>/dev/null; then
+            ok "  proc/$f"
+        fi
     done
 
     # iomem and interrupts — restricted without root/elevated access
@@ -1099,7 +1103,11 @@ run_dump() {
     if [ "$has_elevated" = true ] || [ "$has_root" = true ]; then
         tgt "Collecting logcat (elevated access — no PID filter)..."
         _adb logcat -d -v threadtime > "$dump_dir/logcat.txt" 2>/dev/null || true
-        [ -s "$dump_dir/logcat.txt" ] && ok "  logcat.txt (full)" || warn "  logcat failed"
+        if [ -s "$dump_dir/logcat.txt" ]; then
+            ok "  logcat.txt (full)"
+        else
+            warn "  logcat failed"
+        fi
     fi
 
     # ── 4. Device tree (readable on many devices without root)
@@ -1126,7 +1134,11 @@ run_dump() {
     # ── 5. Loaded kernel modules ─────────────────────────────
     tgt "Collecting kernel modules..."
     _adb shell "cat /proc/modules 2>/dev/null" > "$dump_dir/lsmod.txt" 2>/dev/null || true
-    [ -s "$dump_dir/lsmod.txt" ] && ok "  lsmod.txt" || warn "  lsmod.txt (restricted)"
+    if [ -s "$dump_dir/lsmod.txt" ]; then
+        ok "  lsmod.txt"
+    else
+        warn "  lsmod.txt (restricted)"
+    fi
 
     # ── 6. VINTF manifests (vendor/system, no root needed) ───
     tgt "Collecting VINTF manifests..."
@@ -1152,7 +1164,9 @@ run_dump() {
     mkdir -p "$dump_dir/dumpsys"
     for svc in display SurfaceFlinger audio media.camera battery; do
         _adb shell "dumpsys $svc 2>/dev/null" > "$dump_dir/dumpsys/$svc.txt" 2>/dev/null || true
-        [ -s "$dump_dir/dumpsys/$svc.txt" ] && ok "  dumpsys/$svc" || true
+        if [ -s "$dump_dir/dumpsys/$svc.txt" ]; then
+            ok "  dumpsys/$svc"
+        fi
     done
 
     # ── 8. Build and security info ───────────────────────────
@@ -1285,6 +1299,7 @@ run_dump() {
 find_recovery_zip() {
     local latest=""
     if [ -d "$DIST_DIR" ]; then
+        # shellcheck disable=SC2012  # ls -t for newest is simpler than find here
         latest=$(ls -t "$DIST_DIR"/hands-on-metal-recovery-*.zip 2>/dev/null | head -1 || true)
     fi
     echo "$latest"

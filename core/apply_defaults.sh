@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/apply_defaults.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Load device family defaults from partition_index.json and
 # write them into env_registry.sh as HOM_DEFAULT_* variables.
@@ -178,7 +179,8 @@ run_apply_defaults() {
     if [ "$pvmf" = "spl_dependent" ]; then
         local spl
         spl=$(_reg_get HOM_DEV_SPL)
-        # Compare SPL to 2026-05-07
+        # Compare SPL to 2026-05-06 (mksh/ash support \> for lexicographic compare)
+        # shellcheck disable=SC3012  # \> is non-POSIX but supported by Android mksh / BusyBox ash
         if [ -n "$spl" ] && [ "$spl" \> "2026-05-06" ] 2>/dev/null; then
             pvmf="true"
         else
@@ -219,6 +221,7 @@ _apply_api_level_defaults() {
     local patchvbmetaflag="false"
     local spl
     spl=$(_reg_get HOM_DEV_SPL)
+    # shellcheck disable=SC3012  # \> is non-POSIX but supported by Android mksh / BusyBox ash
     if [ -n "$spl" ] && [ "$spl" \> "2026-04-30" ] 2>/dev/null; then
         patchvbmetaflag="true"
     fi

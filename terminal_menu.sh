@@ -1106,10 +1106,14 @@ run_selected() {
                     SCRIPT_NAME="${rel##*/}"
                     SCRIPT_NAME="${SCRIPT_NAME%.sh}"
                     export SCRIPT_NAME
+                    # shellcheck source=/dev/null
                     source "$REPO_ROOT/core/logging.sh"
+                    # shellcheck source=/dev/null
                     source "$REPO_ROOT/core/ux.sh"
+                    # shellcheck source=/dev/null
                     source "$REPO_ROOT/core/privacy.sh" 2>/dev/null || true
                     # Source the target script (defines its functions)
+                    # shellcheck source=/dev/null
                     source "$script"
                     # Call the appropriate main function
                     case "$rel" in

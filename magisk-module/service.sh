@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # magisk-module/service.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Magisk module service script — runs on every boot with root.
 #
@@ -106,10 +107,14 @@ if [ ! -f "$SENTINEL" ]; then
         SCRIPT_NAME="service"
         export SCRIPT_NAME
 
-        # Bootstrap logging
+        # Bootstrap logging — paths are dynamic at install time
+        # shellcheck disable=SC1091
         . "$CORE/logging.sh"
+        # shellcheck disable=SC1091
         . "$CORE/ux.sh"
+        # shellcheck disable=SC1091
         . "$CORE/state_machine.sh"
+        # shellcheck disable=SC1091
         . "$CORE/privacy.sh"
 
         log_banner "service.sh boot run (RUN_ID=$RUN_ID)"
