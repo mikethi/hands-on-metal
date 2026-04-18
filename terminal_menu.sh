@@ -66,7 +66,7 @@ get_prereqs_for_script() {
         core/share.sh)                        echo "env_registry" ;;
         core/state_machine.sh)                echo "" ;;
         core/ux.sh)                           echo "" ;;
-        magisk-module/collect.sh)             echo "root android_device env_registry" ;;
+        magisk-module/collect.sh)             echo "android_device env_registry" ;;
         magisk-module/customize.sh)           echo "root android_device" ;;
         magisk-module/env_detect.sh)          echo "android_device" ;;
         magisk-module/service.sh)             echo "root android_device" ;;
@@ -270,7 +270,7 @@ script_description() {
         core/share.sh)                     echo "Create a shareable diagnostic bundle (PII redacted)" ;;
         core/state_machine.sh)             echo "Persistent reboot-safe workflow state tracker" ;;
         core/ux.sh)                        echo "User-experience output helpers (TWRP / shell / service)" ;;
-        magisk-module/collect.sh)          echo "Read-only hardware data collection on rooted device" ;;
+        magisk-module/collect.sh)          echo "Hardware data collection (root-adaptive: full with root, partial without)" ;;
         magisk-module/customize.sh)        echo "Main Magisk module installation hook (full workflow)" ;;
         magisk-module/env_detect.sh)       echo "Detect shell, tools, Python, Termux on device" ;;
         magisk-module/service.sh)          echo "Boot service: env detect, Termux setup, collection" ;;
@@ -696,7 +696,9 @@ script_completion_success() {
             echo "UX output helpers loaded (TWRP / shell / service display modes)."
             ;;
         magisk-module/collect.sh)
-            echo "Collected read-only hardware data from the rooted device."
+            echo "Collected hardware data from the device."
+            echo "  With root: full collection (dmesg, pinctrl, vendor libs, boot DD)."
+            echo "  Without root: partial collection (getprop, /proc, sysfs classes, VINTF)."
             ;;
         magisk-module/customize.sh)
             echo "Ran the full Magisk module installation workflow on the device."
@@ -787,7 +789,9 @@ script_completion_failure() {
             echo "Magisk patching failed. Ensure the boot image and Magisk binary are available."
             ;;
         magisk-module/collect.sh)
-            echo "Data collection failed. Ensure root access and an Android environment."
+            echo "Data collection failed. Ensure you are on an Android device."
+            echo "  Without root: some data sources are skipped (dmesg, pinctrl, vendor libs)."
+            echo "  With root: all sources are available."
             ;;
         magisk-module/customize.sh)
             echo "Module installation failed. Ensure root access and an Android environment."
@@ -906,6 +910,7 @@ script_next_steps() {
         magisk-module/collect.sh)
             echo "  → Hardware data collected. Run the pipeline scripts to parse and analyze the data."
             echo "  → Start with 'pipeline/parse_logs.py' or 'pipeline/build_table.py'."
+            echo "  → Without root, some sources were skipped. Re-run with root for full data."
             ;;
         magisk-module/customize.sh)
             echo "  → Module installed. Reboot your device for changes to take effect."

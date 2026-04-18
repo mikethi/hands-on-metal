@@ -1,11 +1,18 @@
 #!/system/bin/sh
 # magisk-module/collect.sh
 # ============================================================
-# Hands-on-metal — Mode A: Live Root Collection
-# Runs on a rooted Android device with Magisk.
+# Hands-on-metal — Hardware Data Collection (root-adaptive)
 # Collects all hardware-relevant data READ-ONLY into
 # /sdcard/hands-on-metal/live_dump/ then writes a manifest so
 # the host-side pipeline knows what is available.
+#
+# Root-adaptive behaviour:
+#   • With root: full collection including dmesg, pinctrl,
+#     vendor library symbols, readelf, boot partition DD, dmsetup
+#   • Without root: partial collection — getprop, /proc files,
+#     readable sysfs classes, VINTF manifests, sysconfig, board
+#     summary, encryption state props.  Root-only sources are
+#     skipped with a [SKIP] log line.
 #
 # Safety guarantees:
 #   • Never mounts any partition read-write
@@ -112,6 +119,13 @@ if [ ! -f "$ENV_REGISTRY" ] || \
 fi
 
 log "=== hands-on-metal collect.sh start ==="
+_HOM_IS_ROOT=false
+[ "$(id -u 2>/dev/null || echo 1)" -eq 0 ] 2>/dev/null && _HOM_IS_ROOT=true
+if [ "$_HOM_IS_ROOT" = false ]; then
+    log "[INFO ] Running WITHOUT root — some data sources will be skipped"
+    log "[INFO ] Root-only: dmesg, /sys/kernel/debug/pinctrl, block device DD,"
+    log "[INFO ]            vendor library symbols, readelf sections"
+fi
 log "Device: $(getprop ro.product.model)"
 
 # 1. Android properties
@@ -123,16 +137,24 @@ log "Collecting lshal..."
 lshal > "$OUT/lshal.txt" 2>&1 && echo "lshal.txt" >> "$MANIFEST"
 lshal --types=b,c,l > "$OUT/lshal_full.txt" 2>&1
 
-# 3. Kernel messages
-log "Collecting dmesg..."
-dmesg > "$OUT/dmesg.txt" && echo "dmesg.txt" >> "$MANIFEST"
+# 3. Kernel messages (requires root)
+if [ "$_HOM_IS_ROOT" = true ]; then
+    log "Collecting dmesg..."
+    dmesg > "$OUT/dmesg.txt" && echo "dmesg.txt" >> "$MANIFEST"
+else
+    log "[SKIP ] dmesg requires root"
+fi
 
-# 4. Kernel modules
+# 4. Kernel modules (may need root for modinfo)
 log "Collecting lsmod / modinfo..."
-lsmod > "$OUT/lsmod.txt" && echo "lsmod.txt" >> "$MANIFEST"
-lsmod | awk 'NR>1{print $1}' | while IFS= read -r mod; do
-    modinfo "$mod" >> "$OUT/modinfo.txt" 2>/dev/null
-done
+lsmod > "$OUT/lsmod.txt" 2>/dev/null && echo "lsmod.txt" >> "$MANIFEST"
+if [ "$_HOM_IS_ROOT" = true ]; then
+    lsmod 2>/dev/null | awk 'NR>1{print $1}' | while IFS= read -r mod; do
+        modinfo "$mod" >> "$OUT/modinfo.txt" 2>/dev/null
+    done
+else
+    log "[SKIP ] modinfo requires root"
+fi
 
 # 5. /proc virtual files
 log "Collecting /proc files..."
@@ -143,9 +165,13 @@ for vf in /proc/cmdline /proc/iomem /proc/interrupts /proc/clocks \
 done
 copy_virtual_dir /proc/device-tree
 
-# 6. pinctrl sysfs (most valuable for pin mapping)
+# 6. pinctrl sysfs (most valuable for pin mapping, usually requires root)
 log "Collecting pinctrl..."
-copy_virtual_dir /sys/kernel/debug/pinctrl
+if [ "$_HOM_IS_ROOT" = true ]; then
+    copy_virtual_dir /sys/kernel/debug/pinctrl
+else
+    log "[SKIP ] /sys/kernel/debug/pinctrl requires root"
+fi
 
 # 7. Platform devices
 log "Collecting platform devices..."
@@ -316,23 +342,31 @@ log "Collecting SELinux policies..."
 copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
 copy_dir /vendor/etc/selinux
 
-# 16. Symbol lists from vendor libraries (text nm output)
-log "Collecting vendor library symbols (nm)..."
-mkdir -p "$OUT/vendor_symbols"
-find /vendor/lib64 /vendor/lib -name "*.so" 2>/dev/null | while IFS= read -r lib; do
-    base=$(basename "$lib")
-    nm -D --defined-only "$lib" > "$OUT/vendor_symbols/${base}.nm.txt" 2>/dev/null && \
-        echo "vendor_symbols/${base}.nm.txt" >> "$MANIFEST"
-done
-
-# 17. readelf dynamic sections (reveals soname, needed libs)
-log "Collecting readelf -d output..."
-mkdir -p "$OUT/vendor_elf"
-find /vendor/lib64 /vendor/lib -name "*.so" 2>/dev/null | head -200 | \
-    while IFS= read -r lib; do
+# 16. Symbol lists from vendor libraries (text nm output, usually requires root)
+if [ "$_HOM_IS_ROOT" = true ]; then
+    log "Collecting vendor library symbols (nm)..."
+    mkdir -p "$OUT/vendor_symbols"
+    find /vendor/lib64 /vendor/lib -name "*.so" 2>/dev/null | while IFS= read -r lib; do
         base=$(basename "$lib")
-        readelf -d "$lib" > "$OUT/vendor_elf/${base}.elf.txt" 2>/dev/null
+        nm -D --defined-only "$lib" > "$OUT/vendor_symbols/${base}.nm.txt" 2>/dev/null && \
+            echo "vendor_symbols/${base}.nm.txt" >> "$MANIFEST"
     done
+else
+    log "[SKIP ] vendor library symbols require root"
+fi
+
+# 17. readelf dynamic sections (reveals soname, needed libs, usually requires root)
+if [ "$_HOM_IS_ROOT" = true ]; then
+    log "Collecting readelf -d output..."
+    mkdir -p "$OUT/vendor_elf"
+    find /vendor/lib64 /vendor/lib -name "*.so" 2>/dev/null | head -200 | \
+        while IFS= read -r lib; do
+            base=$(basename "$lib")
+            readelf -d "$lib" > "$OUT/vendor_elf/${base}.elf.txt" 2>/dev/null
+        done
+else
+    log "[SKIP ] readelf vendor sections require root"
+fi
 
 # 18. board-info reconstructed from props
 log "Writing board summary..."
@@ -385,11 +419,13 @@ reg_set crypto HOM_CRYPTO_STATE "$_cs"
 reg_set crypto HOM_CRYPTO_TYPE "$_ct"
 
 # dm-crypt / dm-verity device-mapper table (reveals encryption algorithm, key size — NOT the key)
-if command -v dmsetup >/dev/null 2>&1; then
+if [ "$_HOM_IS_ROOT" = true ] && command -v dmsetup >/dev/null 2>&1; then
     dmsetup table --showkeys=false > "$OUT/dmsetup_table.txt" 2>/dev/null && \
         echo "dmsetup_table.txt" >> "$MANIFEST"
     dmsetup info  > "$OUT/dmsetup_info.txt"  2>/dev/null
     dmsetup ls    > "$OUT/dmsetup_ls.txt"    2>/dev/null
+elif [ "$_HOM_IS_ROOT" = false ]; then
+    log "[SKIP ] dmsetup requires root"
 fi
 
 # /sys crypto/dm entries
@@ -403,11 +439,12 @@ find /vendor /odm /system /first_stage_ramdisk \
     copy_file "$f"
 done
 
-# 21. Live ramdisk extraction from the running boot partition
-log "Extracting live boot/vendor_boot ramdisk images..."
-mkdir -p "$OUT/boot_images"
+# 21. Live ramdisk extraction from the running boot partition (requires root)
+if [ "$_HOM_IS_ROOT" = true ]; then
+    log "Extracting live boot/vendor_boot ramdisk images..."
+    mkdir -p "$OUT/boot_images"
 
-for boot_part in boot vendor_boot recovery init_boot; do
+    for boot_part in boot vendor_boot recovery init_boot; do
     # Resolve block device
     BOOT_DEV=""
     for try_path in \
@@ -435,8 +472,9 @@ for boot_part in boot vendor_boot recovery init_boot; do
         echo "boot_images/${boot_part}.img" >> "$MANIFEST" && \
         log "  saved ${boot_part}.img ($(wc -c < "$OUT/boot_images/${boot_part}.img") bytes)"
 done
-
-# done
+else
+    log "[SKIP ] Boot partition DD requires root"
+fi
 
 # ── Emit collection-path env vars to the shared registry ─────
 log "Updating env registry with collection paths..."
@@ -463,4 +501,9 @@ done
 
 TOTAL=$(wc -l < "$MANIFEST")
 log "=== Collection complete: $TOTAL files captured ==="
+if [ "$_HOM_IS_ROOT" = false ]; then
+    log "[INFO ] Non-root collection — some data sources were skipped."
+    log "[INFO ] For full collection, run again with root (Magisk su or recovery)."
+fi
+reg_set collect HOM_COLLECT_ROOT "$_HOM_IS_ROOT"
 log "Output: $OUT"
