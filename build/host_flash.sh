@@ -145,12 +145,20 @@ _show_debug_enable_instructions() {
 #   ✓ Access Settings.Secure, Settings.Global databases
 #   ✓ Read logcat without filtering
 #   ✓ Better access to /vendor and /system files
-#   ✗ CANNOT dd partition block devices (needs UID 0 / root)
+#   ✓ List /dev/block/by-name/ symlinks (partition NAME → device NODE mapping)
+#   ✗ CANNOT read block device DATA (dd /dev/block/* — SELinux blocks UID 2000)
 #   ✗ CANNOT write to /dev/block/ (needs root)
 #   ✗ CANNOT flash boot images (needs root or fastboot)
 #
+# IMPORTANT: /dev/block/ access without root gives SYMLINKS ONLY.
+# You can see which partition names exist and what block device nodes
+# they map to (e.g., boot → sda18), but you CANNOT read the actual
+# partition data. SELinux policy (u:object_r:block_device:s0) blocks
+# reads from the shell user. Only root (UID 0) can dd block devices.
+#
 # For hands-on-metal, elevated access improves data collection
-# quality significantly even without root.
+# quality significantly even without root, but partition IMAGE
+# dumps still require root.
 
 # Detect if Shizuku is running on TARGET
 _check_shizuku() {
@@ -1022,20 +1030,33 @@ run_dump() {
     _adb shell getprop > "$dump_dir/getprop.txt" 2>/dev/null && \
         ok "  getprop.txt" || warn "  getprop failed"
 
-    # ── 2. Partition layout (no root needed for listing) ─────
-    tgt "Collecting partition layout..."
+    # ── 2. Partition layout (symlinks only without root) ────
+    # Without root: ls shows symlinks (partition names → block device nodes)
+    # but the actual block device data is NOT readable (SELinux blocks it).
+    # With root: we can also read /proc/partitions sizes and stat devices.
+    tgt "Collecting partition layout (symlinks — names only, not data)..."
     mkdir -p "$dump_dir/partitions"
     {
-        echo "=== /dev/block/bootdevice/by-name/ ==="
+        echo "# NOTE: These are symlinks only. Partition names and their block"
+        echo "# device mappings are visible, but the actual partition DATA"
+        echo "# cannot be read without root (SELinux blocks /dev/block/* reads)."
+        echo ""
+        echo "=== /dev/block/bootdevice/by-name/ (symlinks) ==="
         _adb shell "ls -la /dev/block/bootdevice/by-name/ 2>/dev/null" || true
         echo ""
-        echo "=== /dev/block/by-name/ ==="
+        echo "=== /dev/block/by-name/ (symlinks) ==="
         _adb shell "ls -la /dev/block/by-name/ 2>/dev/null" || true
         echo ""
-        echo "=== /dev/block/platform/*/by-name/ ==="
+        echo "=== /dev/block/platform/*/by-name/ (symlinks) ==="
         _adb shell "ls -la /dev/block/platform/*/by-name/ 2>/dev/null" || true
+        echo ""
+        echo "=== /proc/partitions (block device sizes) ==="
+        _adb shell "cat /proc/partitions 2>/dev/null" || true
+        echo ""
+        echo "=== /proc/mounts (mounted partitions) ==="
+        _adb shell "cat /proc/mounts 2>/dev/null" || true
     } > "$dump_dir/partitions/layout.txt" 2>/dev/null
-    ok "  partitions/layout.txt"
+    ok "  partitions/layout.txt (symlinks + /proc/partitions + /proc/mounts)"
 
     # ── 3. /proc files (mostly accessible without root) ──────
     tgt "Collecting /proc data..."

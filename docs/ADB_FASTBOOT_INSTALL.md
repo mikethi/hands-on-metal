@@ -765,15 +765,24 @@ The script offers WiFi setup **as an option** (menu item 6) and
 | Push files to TARGET | ✓ | `adb push boot.img /sdcard/Download/` |
 | Pull files from TARGET | ✓ | `adb pull /sdcard/ ./backup/` |
 | Read device properties | ✓ | `adb shell getprop ro.product.model` |
-| List partition layout | ✓ | `adb shell ls /dev/block/by-name/` |
+| List partition names (symlinks) | ✓ | `adb shell ls /dev/block/by-name/` — **names only, not data** |
+| Read /proc/partitions (sizes) | ✓ | Block device sizes in sectors — no partition names |
 | Read /proc (cpuinfo, version) | ✓ | Most /proc files are world-readable |
 | Read VINTF manifests | ✓ | `/vendor/etc/vintf/manifest.xml` etc. |
 | Run `dumpsys` services | ✓ | display, SurfaceFlinger, battery, etc. |
 | Reboot to recovery/bootloader | ✓ | `adb reboot recovery` / `adb reboot bootloader` |
-| **DD partition images** | ✗ | Requires root (`su -c dd if=...`) |
+| **Read partition DATA** (dd) | ✗ | SELinux blocks `/dev/block/*` reads for UID 2000 |
 | **Flash boot partition** | ✗ | Requires root DD or fastboot |
 | **Fastboot commands** | ✗ | Fastboot protocol not supported over WiFi |
 | **ADB sideload in TWRP** | ✓¹ | After `adb reboot recovery`, reconnect via USB |
+
+> **Important:** `/dev/block/by-name/` contains **symlinks only** — you can
+> see partition names (boot, dtbo, vbmeta, etc.) and which block device node
+> they map to (e.g., `boot → /dev/block/sda18`), but you **cannot read the
+> actual partition data** without root. SELinux policy
+> (`u:object_r:block_device:s0`) blocks reads from the `shell` user (UID
+> 2000). This applies to both USB ADB and WiFi ADB — the permission model
+> is identical.
 
 ¹ After rebooting TARGET to recovery, the WiFi ADB connection drops.
 You must reconnect via USB cable for sideload, or re-pair in recovery
@@ -847,6 +856,8 @@ ADB-privilege process on-device:
 |-----------|:---:|:---:|:---:|
 | Read device properties (`getprop`) | ✓ | ✓ | ✓ |
 | Push/pull files to `/sdcard/` | ✓ | ✓ | ✓ |
+| List partition names (by-name symlinks) | ✓ | ✓ | ✓ |
+| Read `/proc/partitions` (block sizes) | ✓ | ✓ | ✓ |
 | Read `/proc/cpuinfo`, `/proc/meminfo` | ✓ | ✓ | ✓ |
 | Read `/proc/iomem` (full detail) | Partial | ✓ | ✓ |
 | Read `/proc/interrupts` (full detail) | Partial | ✓ | ✓ |
@@ -854,9 +865,15 @@ ADB-privilege process on-device:
 | Read `Settings.Secure`, `Settings.Global` | ✗ | ✓ | ✓ |
 | Run `pm` / `am` / `cmd` commands | ✗ | ✓ | ✓ |
 | Read more vendor/system files | Partial | ✓ | ✓ |
-| **DD partition block devices** | ✗ | ✗ | ✓ |
+| **Read partition DATA** (dd /dev/block/*) | ✗ | ✗ | ✓ |
 | **Flash boot images** | ✗ | ✗ | ✓ (or fastboot) |
 | **Modify `/system`** | ✗ | ✗ | ✓ |
+
+> **Note on /dev/block/ access:** Both standard ADB and Shizuku/LADB run
+> as UID 2000 (`shell`). SELinux blocks all reads from `/dev/block/*` device
+> nodes for this UID. You can list partition **names** via the by-name
+> symlinks, but you **cannot read the actual partition data**. Only root
+> (UID 0) can `dd` block devices to extract boot images.
 
 ### Setup via `host_flash.sh`
 
@@ -911,7 +928,9 @@ bash build/host_flash.sh -s 192.168.1.100:42456 --dump
 | Data | Standard ADB | Elevated (Shizuku) | Root | Pipeline use |
 |------|:---:|:---:|:---:|---|
 | Device properties (`getprop`) | ✓ | ✓ | ✓ | `parse_manifests.py` — board summary |
-| Partition layout (by-name links) | ✓ | ✓ | ✓ | `failure_analysis.py` — partition check |
+| Partition names (by-name symlinks) | ✓ | ✓ | ✓ | `failure_analysis.py` — partition check |
+| `/proc/partitions` (block sizes) | ✓ | ✓ | ✓ | Partition size analysis |
+| `/proc/mounts` (mounted partitions) | ✓ | ✓ | ✓ | Filesystem type, encryption flags |
 | `/proc/cpuinfo`, `/proc/meminfo` | ✓ | ✓ | ✓ | `build_table.py` — hardware catalog |
 | `/proc/iomem` | Partial | ✓ | ✓ (full) | `build_table.py` — MMIO address map |
 | `/proc/interrupts` | Partial | ✓ | ✓ | `build_table.py` — IRQ assignments |
@@ -921,11 +940,17 @@ bash build/host_flash.sh -s 192.168.1.100:42456 --dump
 | `dumpsys` (display, audio, camera) | ✓ | ✓ | ✓ | Manual analysis |
 | Logcat (full, no PID filter) | ✗ | ✓ | ✓ | Debugging, issue reports |
 | Build/security info summary | ✓ | ✓ | ✓ | `failure_analysis.py` — version check |
-| **Boot/init_boot partition image** | ✗ | ✗ | ✓ | `unpack_images.py` — kernel, ramdisk, fstab |
-| **dtbo partition image** | ✗ | ✗ | ✓ | `unpack_images.py` — device tree overlays |
-| **vbmeta partition image** | ✗ | ✗ | ✓ | Anti-rollback index, AVB chain analysis |
+| **Boot/init_boot partition DATA** | ✗ | ✗ | ✓ | `unpack_images.py` — kernel, ramdisk, fstab |
+| **dtbo partition DATA** | ✗ | ✗ | ✓ | `unpack_images.py` — device tree overlays |
+| **vbmeta partition DATA** | ✗ | ✗ | ✓ | Anti-rollback index, AVB chain analysis |
 | **SELinux policy binary** | ✗ | ✗ | ✓ | Policy analysis, device-specific contexts |
-| **Full /proc/iomem (root DD)** | ✗ | ✗ | ✓ | Complete MMIO map with block device access |
+
+> **Partition names vs. partition DATA:** Without root, the dump collects
+> partition **names** (symlinks in `/dev/block/by-name/` — e.g., `boot →
+> sda18`) and **sizes** (from `/proc/partitions`). The actual partition
+> **data** (the raw bytes — kernel, ramdisk, vbmeta hash trees) can only
+> be read with root via `dd`. SELinux blocks all `/dev/block/*` reads
+> for UID 2000 (both standard ADB and Shizuku/LADB).
 
 ### What you can do with partition dumps
 
