@@ -3,28 +3,39 @@
 # ============================================================
 # hands-on-metal — Host-Assisted Flash (Mode C)
 #
-# Runs on a PC (host machine) connected to a device via USB.
-# Handles devices that have NO custom recovery and NO root.
+# Flashes a TARGET device from the system running this script
+# (the HOST). The host can be a PC (Linux/macOS/Windows) or
+# another Android device (Termux via USB OTG or wireless ADB).
+#
+# Terminology:
+#   HOST   = the machine running this script
+#   TARGET = the device being flashed (connected via USB/OTG/wireless)
 #
 # Supports three sub-paths:
 #   C1 — Temporary TWRP boot:  fastboot boot twrp.img
 #   C2 — Direct fastboot flash of a pre-patched boot image
-#   C3 — ADB sideload (requires recovery on device)
+#   C3 — ADB sideload (requires recovery on target device)
 #
 # Prerequisites (checked automatically):
-#   - adb and fastboot commands available (cmd:adb cmd:fastboot)
-#   - USB-connected Android device (detected via adb/fastboot)
-#   - Unlocked bootloader (for C1 and C2)
+#   - adb and fastboot commands available on HOST
+#   - TARGET device connected and detected via ADB or fastboot
+#   - Unlocked bootloader on TARGET (for C1 and C2)
 #
 # Usage:
-#   bash build/host_flash.sh              # interactive menu
-#   bash build/host_flash.sh --c1 TWRP    # boot TWRP image
-#   bash build/host_flash.sh --c2 IMG     # flash pre-patched image
-#   bash build/host_flash.sh --c3 ZIP     # sideload recovery ZIP
+#   bash build/host_flash.sh                          # interactive menu
+#   bash build/host_flash.sh --c1 TWRP                # boot TWRP image
+#   bash build/host_flash.sh --c2 IMG                 # flash pre-patched image
+#   bash build/host_flash.sh --c3 ZIP                 # sideload recovery ZIP
+#   bash build/host_flash.sh -s SERIAL --c2 IMG       # target specific device
+#
+# Options:
+#   -s SERIAL    Target a specific device by serial number.
+#                Required when multiple devices are connected.
+#                Use 'adb devices' or 'fastboot devices' to list serials.
 #
 # This script follows the same conventions as the terminal menu:
 #   - Prerequisite checking via check_deps.sh IDs
-#   - Color-coded output
+#   - Color-coded output (host ℹ green, target ▸ cyan)
 #   - Completion and next-step messages
 #   - Non-destructive by default (confirms before flashing)
 # ============================================================
@@ -63,10 +74,11 @@ _detect_host_os
 CLR_GREEN=$'\033[92m'
 CLR_YELLOW=$'\033[33m'
 CLR_RED=$'\033[91m'
+CLR_CYAN=$'\033[96m'
 CLR_RESET=$'\033[0m'
 
 if [ ! -t 1 ]; then
-    CLR_GREEN="" CLR_YELLOW="" CLR_RED="" CLR_RESET=""
+    CLR_GREEN="" CLR_YELLOW="" CLR_RED="" CLR_CYAN="" CLR_RESET=""
 fi
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -75,6 +87,139 @@ info()  { printf "%s  ℹ  %s%s\n" "$CLR_GREEN"  "$1" "$CLR_RESET"; }
 warn()  { printf "%s  ⚠  %s%s\n" "$CLR_YELLOW" "$1" "$CLR_RESET"; }
 fail()  { printf "%s  ✗  %s%s\n" "$CLR_RED"    "$1" "$CLR_RESET" >&2; exit 1; }
 ok()    { printf "%s  ✓  %s%s\n" "$CLR_GREEN"  "$1" "$CLR_RESET"; }
+# Target-prefixed messages (cyan ▸) to distinguish from host (green ℹ)
+tgt()   { printf "%s  ▸  [TARGET] %s%s\n" "$CLR_CYAN" "$1" "$CLR_RESET"; }
+
+# ── Target device serial ─────────────────────────────────────
+# If set, all adb/fastboot commands are routed to this device.
+# Set via -s <serial> option.
+HOM_TARGET_SERIAL="${HOM_TARGET_SERIAL:-}"
+
+# Wrappers that inject -s <serial> when a target is specified.
+# All device commands MUST go through these wrappers.
+_adb() {
+    if [ -n "$HOM_TARGET_SERIAL" ]; then
+        adb -s "$HOM_TARGET_SERIAL" "$@"
+    else
+        adb "$@"
+    fi
+}
+
+_fastboot() {
+    if [ -n "$HOM_TARGET_SERIAL" ]; then
+        fastboot -s "$HOM_TARGET_SERIAL" "$@"
+    else
+        fastboot "$@"
+    fi
+}
+
+# ── Target device identification ─────────────────────────────
+# Reads model, build, serial from the target to display in headers
+# and confirmation prompts. Called once after connection is established.
+
+HOM_TARGET_MODEL=""
+HOM_TARGET_BUILD=""
+HOM_TARGET_SERIAL_DISPLAY=""
+HOM_TARGET_ANDROID_VER=""
+
+_identify_target_adb() {
+    HOM_TARGET_MODEL=$(_adb shell getprop ro.product.model 2>/dev/null | tr -d '\r' || echo "unknown")
+    HOM_TARGET_BUILD=$(_adb shell getprop ro.build.display.id 2>/dev/null | tr -d '\r' || echo "unknown")
+    HOM_TARGET_ANDROID_VER=$(_adb shell getprop ro.build.version.release 2>/dev/null | tr -d '\r' || echo "unknown")
+    HOM_TARGET_SERIAL_DISPLAY=$(_adb get-serialno 2>/dev/null | tr -d '\r' || echo "${HOM_TARGET_SERIAL:-unknown}")
+}
+
+_identify_target_fastboot() {
+    HOM_TARGET_SERIAL_DISPLAY=$(_fastboot getvar serialno 2>&1 | grep 'serialno:' | awk '{print $2}' || echo "${HOM_TARGET_SERIAL:-unknown}")
+    HOM_TARGET_MODEL=$(_fastboot getvar product 2>&1 | grep 'product:' | awk '{print $2}' || echo "unknown")
+    HOM_TARGET_BUILD=""
+    HOM_TARGET_ANDROID_VER=""
+}
+
+_print_target_banner() {
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────┐"
+    printf "  │  HOST   : %-40s│\n" "$HOM_HOST_OS ($(uname -m 2>/dev/null || echo unknown))"
+    printf "  │  TARGET : %-40s│\n" "${HOM_TARGET_MODEL:-not yet detected}"
+    if [ -n "$HOM_TARGET_BUILD" ]; then
+        printf "  │  Build  : %-40s│\n" "$HOM_TARGET_BUILD"
+    fi
+    if [ -n "$HOM_TARGET_ANDROID_VER" ]; then
+        printf "  │  Android: %-40s│\n" "$HOM_TARGET_ANDROID_VER"
+    fi
+    printf "  │  Serial : %-40s│\n" "${HOM_TARGET_SERIAL_DISPLAY:-auto-detect}"
+    echo "  └──────────────────────────────────────────────────┘"
+    echo ""
+
+    # Device-to-device warning
+    if [ "$HOM_HOST_OS" = "termux" ] || [ "$HOM_HOST_OS" = "android" ]; then
+        local host_model
+        host_model=$(getprop ro.product.model 2>/dev/null || echo "this device")
+        if [ "$HOM_TARGET_MODEL" = "$host_model" ] && [ "$HOM_TARGET_MODEL" != "unknown" ]; then
+            warn "HOST and TARGET appear to be the same device ($host_model)."
+            echo "    You cannot flash the device you're running on via ADB/fastboot."
+            echo "    To flash THIS device, use Mode A (Magisk) or Mode B (Recovery) instead."
+            echo ""
+            read -r -p "  Continue anyway? [y/N]: " cont
+            [ "$cont" = "y" ] || [ "$cont" = "Y" ] || exit 0
+        else
+            info "Device-to-device mode: $host_model (HOST) → ${HOM_TARGET_MODEL} (TARGET)"
+        fi
+    fi
+}
+
+# Resolve which target device to use when multiple are connected.
+_resolve_target_serial() {
+    local mode="$1"  # "adb" or "fastboot"
+    local devices=""
+    local count=0
+
+    if [ -n "$HOM_TARGET_SERIAL" ]; then
+        return 0  # already set via -s option
+    fi
+
+    if [ "$mode" = "adb" ]; then
+        devices=$(adb devices 2>/dev/null | grep -E '\t(device|recovery|sideload)' | awk '{print $1}')
+    else
+        devices=$(fastboot devices 2>/dev/null | awk '{print $1}')
+    fi
+
+    count=$(echo "$devices" | grep -c . 2>/dev/null || echo 0)
+
+    if [ "$count" -eq 0 ]; then
+        return 1  # no devices
+    elif [ "$count" -eq 1 ]; then
+        HOM_TARGET_SERIAL="$devices"
+        return 0
+    else
+        # Multiple devices — user must pick
+        echo ""
+        warn "Multiple devices detected. Select the TARGET device to flash:"
+        echo ""
+        local i=1
+        local serials=()
+        while IFS= read -r serial; do
+            serials+=("$serial")
+            local label=""
+            if [ "$mode" = "adb" ]; then
+                label=$(adb -s "$serial" shell getprop ro.product.model 2>/dev/null | tr -d '\r' || echo "")
+            else
+                label=$(fastboot -s "$serial" getvar product 2>&1 | grep 'product:' | awk '{print $2}' || echo "")
+            fi
+            printf "    %d) %s  %s\n" "$i" "$serial" "${label:+($label)}"
+            i=$((i + 1))
+        done <<< "$devices"
+
+        echo ""
+        read -r -p "  Select target [1-$count]: " pick
+        if [ -z "$pick" ] || [ "$pick" -lt 1 ] 2>/dev/null || [ "$pick" -gt "$count" ] 2>/dev/null; then
+            fail "Invalid selection. Use -s <serial> to specify the target device."
+        fi
+        HOM_TARGET_SERIAL="${serials[$((pick - 1))]}"
+        ok "Selected target: $HOM_TARGET_SERIAL"
+        return 0
+    fi
+}
 
 # ── Prerequisite checks (OS-tailored) ─────────────────────────
 
@@ -194,37 +339,47 @@ check_host_prereqs() {
 # Check if a device is connected in the given mode.
 # Returns 0 if found, 1 if not.
 check_device_adb() {
-    local count
-    count=$(adb devices 2>/dev/null | grep -cE '\t(device|recovery|sideload)' || true)
-    [ "$count" -gt 0 ]
+    if [ -n "$HOM_TARGET_SERIAL" ]; then
+        # Check specific serial
+        adb devices 2>/dev/null | grep -qE "^${HOM_TARGET_SERIAL}\s+(device|recovery|sideload)"
+    else
+        local count
+        count=$(adb devices 2>/dev/null | grep -cE '\t(device|recovery|sideload)' || true)
+        [ "$count" -gt 0 ]
+    fi
 }
 
 check_device_fastboot() {
-    local count
-    # On Windows, fastboot may show "fastboot" or "fastbootd"
-    count=$(fastboot devices 2>/dev/null | grep -cE 'fastboot' || true)
-    [ "$count" -gt 0 ]
+    if [ -n "$HOM_TARGET_SERIAL" ]; then
+        fastboot devices 2>/dev/null | grep -qE "^${HOM_TARGET_SERIAL}\s"
+    else
+        local count
+        count=$(fastboot devices 2>/dev/null | grep -cE 'fastboot' || true)
+        [ "$count" -gt 0 ]
+    fi
 }
 
 wait_for_device() {
     local mode="$1" timeout="${2:-30}"
     local elapsed=0
+    local serial_hint=""
+    [ -n "$HOM_TARGET_SERIAL" ] && serial_hint=" (serial: $HOM_TARGET_SERIAL)"
 
-    info "Waiting for device in $mode mode (${timeout}s timeout)..."
+    info "Waiting for TARGET device in $mode mode${serial_hint} (${timeout}s timeout)..."
 
     # Platform-specific hints while waiting
     if [ "$mode" = "fastboot" ] && [ "$HOM_HOST_OS" = "termux" ]; then
         warn "Fastboot in Termux requires USB OTG cable — wireless ADB does not support fastboot."
     elif [ "$mode" = "fastboot" ] && [ "$HOM_HOST_OS" = "windows" ]; then
-        info "Windows: if device is not detected, check USB driver installation."
+        info "Windows: if TARGET is not detected, check USB driver installation."
     elif [ "$mode" = "adb" ] && [ "$HOM_HOST_OS" = "termux" ]; then
         info "Termux ADB: ensure wireless debugging is connected (adb connect <ip>:<port>)."
     fi
 
     while [ "$elapsed" -lt "$timeout" ]; do
         case "$mode" in
-            adb)      check_device_adb && { ok "Device found (ADB)"; return 0; } ;;
-            fastboot) check_device_fastboot && { ok "Device found (fastboot)"; return 0; } ;;
+            adb)      check_device_adb && { ok "TARGET device found (ADB)${serial_hint}"; return 0; } ;;
+            fastboot) check_device_fastboot && { ok "TARGET device found (fastboot)${serial_hint}"; return 0; } ;;
         esac
         sleep 2
         elapsed=$((elapsed + 2))
@@ -234,35 +389,40 @@ wait_for_device() {
     echo ""
     case "$HOM_HOST_OS" in
         linux)
-            warn "Device not found. Check:"
+            warn "TARGET device not found. Check:"
             echo "    • USB cable is data-capable (not charge-only)"
-            echo "    • USB debugging is enabled on device"
+            echo "    • USB debugging is enabled on TARGET device"
             echo "    • Run: sudo adb devices  (if permission denied)"
             echo "    • Check udev rules: lsusb | grep -i android"
             ;;
         macos)
-            warn "Device not found. Check:"
+            warn "TARGET device not found. Check:"
             echo "    • USB cable is data-capable"
-            echo "    • USB debugging is enabled"
+            echo "    • USB debugging is enabled on TARGET"
             echo "    • Click 'Allow' on any macOS accessory prompts"
             echo "    • Try: adb kill-server && adb start-server"
             ;;
         windows)
-            warn "Device not found. Check:"
+            warn "TARGET device not found. Check:"
             echo "    • USB cable is data-capable"
-            echo "    • USB debugging is enabled"
-            echo "    • USB driver is installed (Device Manager → show device)"
+            echo "    • USB debugging is enabled on TARGET"
+            echo "    • USB driver is installed for TARGET (Device Manager → show device)"
             echo "    • Try: adb kill-server && adb start-server"
             echo "    • Download driver: https://developer.android.com/studio/run/oem-usb"
             ;;
         termux)
-            warn "Device not found. Check:"
-            echo "    • Wireless debugging is enabled and paired"
-            echo "    • Run: adb connect <ip>:<port>"
-            echo "    • For fastboot: USB OTG cable is required"
+            warn "TARGET device not found. Check:"
+            echo "    • For wireless: TARGET has wireless debugging enabled and paired"
+            echo "    • Run: adb pair <ip>:<pair_port>  then  adb connect <ip>:<port>"
+            echo "    • For USB OTG: OTG cable connected to TARGET"
+            echo "    • Fastboot requires USB OTG — wireless does not support fastboot"
+            ;;
+        android)
+            warn "TARGET device not found."
+            echo "    Consider using Termux (with wireless debugging) or a PC instead."
             ;;
         *)
-            warn "Device not found. Check USB connection and debugging settings."
+            warn "TARGET device not found. Check USB connection and debugging settings."
             ;;
     esac
     return 1
@@ -287,106 +447,116 @@ run_c1() {
     echo "  Mode C1 — Temporary TWRP Boot via fastboot"
     echo "═══════════════════════════════════════════════════════"
     echo ""
-    info "This boots TWRP temporarily (in RAM). After reboot, stock recovery returns."
+    info "HOST ($HOM_HOST_OS) will boot TWRP on TARGET via fastboot."
+    info "TWRP runs in RAM only — TARGET's stock recovery is unchanged."
     echo ""
 
     # Validate TWRP image
     if [ -z "$twrp_img" ]; then
-        echo "  Enter the path to your TWRP .img file:"
-        echo "  (Download from https://twrp.me/Devices/ for your device)"
+        echo "  Enter the path to your TWRP .img file (on this $HOM_HOST_OS machine):"
+        echo "  (Download from https://twrp.me/Devices/ for your TARGET device)"
         echo ""
         read -r -p "  TWRP image path: " twrp_img
     fi
 
     if [ ! -f "$twrp_img" ]; then
-        fail "TWRP image not found at: $twrp_img"
+        fail "TWRP image not found at: $twrp_img (on HOST)"
     fi
 
-    ok "TWRP image: $twrp_img"
+    ok "TWRP image (on HOST): $twrp_img"
 
-    # Get device into fastboot
+    # Get TARGET device into fastboot
     if check_device_fastboot; then
-        ok "Device already in fastboot mode"
+        _resolve_target_serial fastboot
+        _identify_target_fastboot
+        ok "TARGET already in fastboot mode"
     elif check_device_adb; then
-        info "Rebooting device to bootloader..."
-        adb reboot bootloader
-        wait_for_device fastboot 30 || fail "Device did not enter fastboot mode"
+        _resolve_target_serial adb
+        _identify_target_adb
+        tgt "Rebooting TARGET to bootloader..."
+        _adb reboot bootloader
+        wait_for_device fastboot 30 || fail "TARGET did not enter fastboot mode"
     else
         echo ""
-        warn "No device detected."
+        warn "No TARGET device detected."
         case "$HOM_HOST_OS" in
             linux|macos)
-                echo "    Connect your device via USB, then either:"
-                echo "      • Enable USB debugging and run: adb reboot bootloader"
-                echo "      • Or power off, then hold Power + Volume Down to enter fastboot"
+                echo "    Connect TARGET device via USB, then either:"
+                echo "      • Enable USB debugging on TARGET and run: adb reboot bootloader"
+                echo "      • Or power off TARGET, hold Power + Volume Down to enter fastboot"
                 ;;
             windows)
-                echo "    1. Ensure USB driver is installed (Device Manager)"
-                echo "    2. Connect device via USB, then either:"
+                echo "    1. Ensure USB driver for TARGET is installed (Device Manager)"
+                echo "    2. Connect TARGET via USB, then either:"
                 echo "       • Run: adb reboot bootloader"
-                echo "       • Or power off, hold Power + Volume Down"
+                echo "       • Or power off TARGET, hold Power + Volume Down"
                 ;;
             termux)
-                echo "    Fastboot requires USB OTG cable — wireless ADB cannot enter fastboot."
-                echo "    Connect target device via OTG, then:"
-                echo "      Power off target → hold Power + Volume Down"
+                echo "    Fastboot requires USB OTG cable from this device to TARGET."
+                echo "    Wireless ADB cannot enter fastboot."
+                echo "    Connect TARGET via OTG, then:"
+                echo "      Power off TARGET → hold Power + Volume Down"
                 ;;
             *)
-                echo "    Connect device and enter fastboot mode (Power + Volume Down)"
+                echo "    Connect TARGET and enter fastboot mode (Power + Volume Down)"
                 ;;
         esac
         echo ""
-        wait_for_device fastboot 60 || fail "No device found in fastboot mode"
+        wait_for_device fastboot 60 || fail "No TARGET device found in fastboot mode"
+        _resolve_target_serial fastboot
+        _identify_target_fastboot
     fi
 
-    # Boot TWRP
-    info "Booting TWRP image (temporary, RAM only)..."
-    if ! fastboot boot "$twrp_img"; then
-        fail "fastboot boot failed. Your device may not support booting unsigned images.
+    _print_target_banner
+
+    # Boot TWRP on TARGET
+    tgt "Booting TWRP image on TARGET (temporary, RAM only)..."
+    if ! _fastboot boot "$twrp_img"; then
+        fail "fastboot boot failed on TARGET. The device may not support booting unsigned images.
   Try instead:
-    fastboot flash recovery $twrp_img
-    fastboot reboot recovery"
+    fastboot${HOM_TARGET_SERIAL:+ -s $HOM_TARGET_SERIAL} flash recovery $twrp_img
+    fastboot${HOM_TARGET_SERIAL:+ -s $HOM_TARGET_SERIAL} reboot recovery"
     fi
 
-    ok "TWRP booted successfully"
+    ok "TWRP booted on TARGET"
     echo ""
 
     # Offer to sideload the recovery ZIP
     local zip
     zip=$(find_recovery_zip)
     if [ -n "$zip" ]; then
-        echo "  Found recovery ZIP: $zip"
+        echo "  Found recovery ZIP (on HOST): $zip"
         echo ""
-        read -r -p "  Sideload this ZIP now? [y/N]: " do_sideload
+        read -r -p "  Sideload this ZIP to TARGET now? [y/N]: " do_sideload
         if [ "$do_sideload" = "y" ] || [ "$do_sideload" = "Y" ]; then
             echo ""
-            info "Waiting for TWRP to start ADB..."
-            echo "  On device: tap Advanced → ADB Sideload → Swipe to start"
+            info "Waiting for TWRP ADB on TARGET..."
+            echo "  On TARGET device: tap Advanced → ADB Sideload → Swipe to start"
             echo ""
-            wait_for_device adb 120 || fail "Device not detected in ADB mode. Start ADB sideload in TWRP first."
+            wait_for_device adb 120 || fail "TARGET not detected in ADB mode. Start ADB sideload in TWRP on TARGET first."
 
-            info "Sideloading: $zip"
-            adb sideload "$zip"
+            tgt "Sideloading to TARGET: $zip"
+            _adb sideload "$zip"
             local rc=$?
             if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
                 # adb sideload returns 1 on some TWRP versions even on success
-                ok "Sideload complete (exit code $rc)"
+                ok "Sideload to TARGET complete (exit code $rc)"
             else
-                fail "Sideload failed (exit code $rc)"
+                fail "Sideload to TARGET failed (exit code $rc)"
             fi
         fi
     else
-        echo "  No recovery ZIP found in $DIST_DIR/"
-        echo "  Run 'build/build_offline_zip.sh' first, or push manually:"
-        echo "    adb push <recovery-zip> /sdcard/"
-        echo "    Then flash from TWRP: Install → select ZIP"
+        echo "  No recovery ZIP found in $DIST_DIR/ (on HOST)"
+        echo "  Run 'build/build_offline_zip.sh' on HOST first, or push manually:"
+        echo "    adb${HOM_TARGET_SERIAL:+ -s $HOM_TARGET_SERIAL} push <recovery-zip> /sdcard/"
+        echo "    Then flash from TWRP on TARGET: Install → select ZIP"
     fi
 
     echo ""
     echo "  Next steps:"
-    echo "    1. If not sideloaded: flash the ZIP from TWRP → Install"
-    echo "    2. After flash: device reboots automatically"
-    echo "    3. Open Magisk app → confirm root"
+    echo "    1. If not sideloaded: flash the ZIP from TWRP on TARGET → Install"
+    echo "    2. After flash: TARGET reboots automatically"
+    echo "    3. On TARGET: open Magisk app → confirm root"
     echo ""
 }
 
@@ -400,78 +570,97 @@ run_c2() {
     echo "  Mode C2 — Direct Fastboot Flash"
     echo "═══════════════════════════════════════════════════════"
     echo ""
-    info "Flashes a pre-patched boot image directly via fastboot."
-    info "No recovery needed. Boot image must be patched on PC first."
+    info "HOST ($HOM_HOST_OS) will flash a pre-patched boot image to TARGET via fastboot."
+    info "No recovery needed on TARGET. Boot image must be patched on HOST first."
     echo ""
 
-    # Validate patched image
+    # Validate patched image (must exist on HOST)
     if [ -z "$patched_img" ]; then
-        echo "  Enter the path to your Magisk-patched boot image:"
+        echo "  Enter the path to your Magisk-patched boot image (on this $HOM_HOST_OS machine):"
         echo "  (Patch via Magisk app on another device, or extract from factory image)"
         echo ""
-        read -r -p "  Patched boot image path: " patched_img
+        read -r -p "  Patched boot image path (on HOST): " patched_img
     fi
 
     if [ ! -f "$patched_img" ]; then
-        fail "Patched boot image not found at: $patched_img"
+        fail "Patched boot image not found at: $patched_img (on HOST)"
     fi
 
-    ok "Patched image: $patched_img"
+    ok "Patched image (on HOST): $patched_img"
 
     # Detect partition type from filename
     local part_name="boot"
     case "$patched_img" in
         *init_boot*) part_name="init_boot" ;;
     esac
-    info "Target partition: $part_name (detected from filename)"
+    info "Target partition on TARGET: $part_name (detected from filename)"
 
-    # Get device into fastboot
+    # Get TARGET into fastboot
     if check_device_fastboot; then
-        ok "Device already in fastboot mode"
+        _resolve_target_serial fastboot
+        _identify_target_fastboot
+        ok "TARGET already in fastboot mode"
     elif check_device_adb; then
-        info "Rebooting device to bootloader..."
-        adb reboot bootloader
-        wait_for_device fastboot 30 || fail "Device did not enter fastboot mode"
+        _resolve_target_serial adb
+        _identify_target_adb
+        tgt "Rebooting TARGET to bootloader..."
+        _adb reboot bootloader
+        wait_for_device fastboot 30 || fail "TARGET did not enter fastboot mode"
     else
         echo ""
-        warn "No device detected. Connect and enter fastboot mode:"
-        echo "    Power off → hold Power + Volume Down"
+        warn "No TARGET device detected."
+        case "$HOM_HOST_OS" in
+            termux)
+                echo "    Connect TARGET device via USB OTG cable, then:"
+                echo "      Power off TARGET → hold Power + Volume Down"
+                ;;
+            *)
+                echo "    Connect TARGET and enter fastboot mode:"
+                echo "      Power off TARGET → hold Power + Volume Down"
+                ;;
+        esac
         echo ""
-        wait_for_device fastboot 60 || fail "No device found in fastboot mode"
+        wait_for_device fastboot 60 || fail "No TARGET device found in fastboot mode"
+        _resolve_target_serial fastboot
+        _identify_target_fastboot
     fi
 
-    # Confirm before flashing
+    _print_target_banner
+
+    # Confirm before flashing TARGET
     echo ""
-    echo "  ${CLR_YELLOW}WARNING: This will overwrite the $part_name partition.${CLR_RESET}"
-    echo "  Image : $patched_img"
-    echo "  Target: $part_name"
+    echo "  ${CLR_YELLOW}WARNING: This will overwrite the $part_name partition on TARGET.${CLR_RESET}"
+    echo "  HOST     : $HOM_HOST_OS"
+    echo "  TARGET   : ${HOM_TARGET_MODEL:-unknown} (serial: ${HOM_TARGET_SERIAL_DISPLAY:-auto})"
+    echo "  Partition: $part_name"
+    echo "  Image    : $patched_img (on HOST)"
     echo ""
-    read -r -p "  Proceed with flash? [y/N]: " confirm
+    read -r -p "  Proceed with flash to TARGET? [y/N]: " confirm
     if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
         info "Flash cancelled."
         return 0
     fi
 
-    # Flash
-    info "Flashing $part_name..."
-    if ! fastboot flash "$part_name" "$patched_img"; then
-        fail "fastboot flash failed. Check:
-  • Is the bootloader unlocked?
-  • Is the image the correct format for your device?
-  • Try: fastboot flashing unlock"
+    # Flash TARGET
+    tgt "Flashing $part_name on TARGET..."
+    if ! _fastboot flash "$part_name" "$patched_img"; then
+        fail "fastboot flash failed on TARGET. Check:
+  • Is TARGET's bootloader unlocked?
+  • Is the image the correct format for TARGET?
+  • Try: fastboot${HOM_TARGET_SERIAL:+ -s $HOM_TARGET_SERIAL} flashing unlock"
     fi
 
-    ok "Flash successful"
+    ok "Flash to TARGET successful"
 
-    # Reboot
-    read -r -p "  Reboot now? [Y/n]: " do_reboot
+    # Reboot TARGET
+    read -r -p "  Reboot TARGET now? [Y/n]: " do_reboot
     if [ "$do_reboot" != "n" ] && [ "$do_reboot" != "N" ]; then
-        fastboot reboot
-        ok "Device rebooting"
+        _fastboot reboot
+        ok "TARGET rebooting"
     fi
 
     echo ""
-    echo "  Next steps:"
+    echo "  Next steps (on TARGET device):"
     echo "    1. Install Magisk app (APK) if not already installed"
     echo "    2. Open Magisk → confirm root"
     echo "    3. Flash the hands-on-metal Magisk module ZIP via Magisk app"
@@ -488,80 +677,100 @@ run_c3() {
     echo "  Mode C3 — ADB Sideload"
     echo "═══════════════════════════════════════════════════════"
     echo ""
-    info "Sideloads the recovery ZIP to a device in TWRP/OrangeFox recovery."
-    warn "Stock recovery does NOT accept unsigned ZIPs — custom recovery required."
+    info "HOST ($HOM_HOST_OS) will sideload the recovery ZIP to TARGET."
+    warn "Stock recovery on TARGET does NOT accept unsigned ZIPs — custom recovery required."
     echo ""
 
-    # Find ZIP
+    # Find ZIP (on HOST)
     if [ -z "$zip" ]; then
         zip=$(find_recovery_zip)
         if [ -n "$zip" ]; then
-            info "Found recovery ZIP: $zip"
+            info "Found recovery ZIP (on HOST): $zip"
             read -r -p "  Use this ZIP? [Y/n]: " use_found
             if [ "$use_found" = "n" ] || [ "$use_found" = "N" ]; then
-                read -r -p "  Enter ZIP path: " zip
+                read -r -p "  Enter ZIP path (on HOST): " zip
             fi
         else
-            echo "  No recovery ZIP found in $DIST_DIR/"
-            echo "  Run 'build/build_offline_zip.sh' first, or enter a path:"
+            echo "  No recovery ZIP found in $DIST_DIR/ (on HOST)"
+            echo "  Run 'build/build_offline_zip.sh' on HOST first, or enter a path:"
             echo ""
-            read -r -p "  Recovery ZIP path: " zip
+            read -r -p "  Recovery ZIP path (on HOST): " zip
         fi
     fi
 
     if [ ! -f "$zip" ]; then
-        fail "Recovery ZIP not found at: $zip"
+        fail "Recovery ZIP not found at: $zip (on HOST)"
     fi
 
-    ok "Recovery ZIP: $zip"
+    ok "Recovery ZIP (on HOST): $zip"
 
-    # Check device state
+    # Check TARGET device state
     if check_device_adb; then
+        _resolve_target_serial adb
+        _identify_target_adb
+
         # Check if already in recovery/sideload
         local state
-        state=$(adb devices 2>/dev/null | grep -oE '(recovery|sideload)' | head -1 || true)
+        state=$(adb devices 2>/dev/null | grep -E "^${HOM_TARGET_SERIAL:-[^\t]+}\s" | grep -oE '(recovery|sideload)' | head -1 || true)
         if [ "$state" = "sideload" ]; then
-            ok "Device already in sideload mode"
+            ok "TARGET already in sideload mode"
         elif [ "$state" = "recovery" ]; then
-            info "Device is in recovery mode."
-            echo "  On device: tap Advanced → ADB Sideload → Swipe to start"
+            tgt "TARGET is in recovery mode."
+            echo "  On TARGET: tap Advanced → ADB Sideload → Swipe to start"
             echo ""
-            read -r -p "  Press Enter when sideload mode is active..."
+            read -r -p "  Press Enter when sideload mode is active on TARGET..."
         else
-            info "Device detected in normal ADB mode. Rebooting to recovery..."
-            adb reboot recovery
+            tgt "TARGET detected in normal ADB mode. Rebooting TARGET to recovery..."
+            _adb reboot recovery
             echo ""
-            echo "  Waiting for TWRP to boot..."
-            echo "  When TWRP loads: tap Advanced → ADB Sideload → Swipe to start"
+            echo "  Waiting for TWRP to boot on TARGET..."
+            echo "  When TWRP loads on TARGET: tap Advanced → ADB Sideload → Swipe to start"
             echo ""
-            read -r -p "  Press Enter when sideload mode is active..."
+            read -r -p "  Press Enter when sideload mode is active on TARGET..."
         fi
     else
         echo ""
-        warn "No device detected via ADB."
-        echo "    1. Boot into recovery (Power + Volume Down, or 'adb reboot recovery')"
-        echo "    2. In TWRP: Advanced → ADB Sideload → Swipe to start"
+        warn "No TARGET device detected via ADB."
+        case "$HOM_HOST_OS" in
+            termux)
+                echo "    For wireless ADB:"
+                echo "      1. On TARGET: Settings → Developer options → Wireless debugging"
+                echo "      2. On this device: adb pair <ip>:<pair_port>"
+                echo "      3. On this device: adb connect <ip>:<port>"
+                echo "    For USB OTG:"
+                echo "      Connect TARGET via OTG cable"
+                ;;
+            *)
+                echo "    1. Connect TARGET via USB"
+                echo "    2. Boot TARGET into recovery (Power + Volume Down, or 'adb reboot recovery')"
+                echo "    3. In TWRP on TARGET: Advanced → ADB Sideload → Swipe to start"
+                ;;
+        esac
         echo ""
-        read -r -p "  Press Enter when device is in sideload mode..."
+        read -r -p "  Press Enter when TARGET is in sideload mode..."
+        _resolve_target_serial adb
+        _identify_target_adb
     fi
 
-    # Sideload
-    info "Sideloading: $zip"
-    adb sideload "$zip"
+    _print_target_banner
+
+    # Sideload to TARGET
+    tgt "Sideloading to TARGET: $zip"
+    _adb sideload "$zip"
     local rc=$?
     if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
-        ok "Sideload complete (exit code $rc — normal for TWRP)"
+        ok "Sideload to TARGET complete (exit code $rc — normal for TWRP)"
     else
-        fail "Sideload failed (exit code $rc).
-  Check that the device is in TWRP sideload mode.
+        fail "Sideload to TARGET failed (exit code $rc).
+  Check that TARGET is in TWRP sideload mode.
   Stock recovery rejects unsigned ZIPs."
     fi
 
     echo ""
-    echo "  Next steps:"
-    echo "    1. Device reboots automatically after the installer finishes"
-    echo "    2. Open Magisk app → confirm root"
-    echo "    3. Check /sdcard/hands-on-metal/ for hardware data"
+    echo "  Next steps (on TARGET device):"
+    echo "    1. TARGET reboots automatically after the installer finishes"
+    echo "    2. On TARGET: open Magisk app → confirm root"
+    echo "    3. On TARGET: check /sdcard/hands-on-metal/ for hardware data"
     echo ""
 }
 
@@ -573,27 +782,42 @@ show_menu() {
     local zip
     zip=$(find_recovery_zip)
 
+    # Try to detect and identify target
+    local target_status="not detected"
+    if check_device_adb; then
+        _resolve_target_serial adb
+        _identify_target_adb
+        target_status="${HOM_TARGET_MODEL} (Android ${HOM_TARGET_ANDROID_VER}, serial: ${HOM_TARGET_SERIAL_DISPLAY})"
+    elif check_device_fastboot; then
+        _resolve_target_serial fastboot
+        _identify_target_fastboot
+        target_status="${HOM_TARGET_MODEL} (fastboot, serial: ${HOM_TARGET_SERIAL_DISPLAY})"
+    fi
+
     echo ""
     echo "═══════════════════════════════════════════════════════"
     echo "  hands-on-metal — Host-Assisted Flash (Mode C)"
     echo "═══════════════════════════════════════════════════════"
     echo ""
+    printf "  HOST   : %s (%s)\n" "$HOM_HOST_OS" "$(uname -m 2>/dev/null || echo unknown)"
+    printf "  TARGET : %s\n" "$target_status"
+    echo ""
     echo "  Choose a sub-path:"
     echo ""
     echo "    1) C1 — Temporary TWRP boot (fastboot boot twrp.img)"
-    echo "           No recovery needed. Boots TWRP in RAM, then sideload."
+    echo "           Boots TWRP in RAM on TARGET, then sideload."
     echo ""
     echo "    2) C2 — Direct fastboot flash (pre-patched boot image)"
-    echo "           No recovery needed. Requires image patched on PC."
+    echo "           Flashes boot image from HOST to TARGET. No recovery needed."
     echo ""
-    echo "    3) C3 — ADB sideload (requires TWRP/OrangeFox on device)"
-    echo "           Fastest if you already have custom recovery."
+    echo "    3) C3 — ADB sideload (requires TWRP/OrangeFox on TARGET)"
+    echo "           Sends recovery ZIP from HOST to TARGET."
     echo ""
 
     if [ -n "$zip" ]; then
-        echo "  ${CLR_GREEN}Recovery ZIP found: $(basename "$zip")${CLR_RESET}"
+        echo "  ${CLR_GREEN}Recovery ZIP found (on HOST): $(basename "$zip")${CLR_RESET}"
     else
-        echo "  ${CLR_YELLOW}No recovery ZIP found — run 'build/build_offline_zip.sh' first${CLR_RESET}"
+        echo "  ${CLR_YELLOW}No recovery ZIP found on HOST — run 'build/build_offline_zip.sh' first${CLR_RESET}"
     fi
 
     echo ""
@@ -613,18 +837,43 @@ show_menu() {
 # ── CLI entry point ───────────────────────────────────────────
 
 main() {
+    # Parse global options first (-s serial)
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -s)
+                shift
+                if [ $# -eq 0 ]; then
+                    fail "Option -s requires a serial number argument."
+                fi
+                HOM_TARGET_SERIAL="$1"
+                info "Target serial set: $HOM_TARGET_SERIAL"
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
     case "${1:-}" in
         --c1) shift; check_host_prereqs; run_c1 "$@" ;;
         --c2) shift; check_host_prereqs; run_c2 "$@" ;;
         --c3) shift; check_host_prereqs; run_c3 "$@" ;;
         --help|-h)
-            echo "Usage: bash build/host_flash.sh [--c1 TWRP_IMG | --c2 PATCHED_IMG | --c3 ZIP]"
+            echo "Usage: bash build/host_flash.sh [-s SERIAL] [--c1 TWRP_IMG | --c2 PATCHED_IMG | --c3 ZIP]"
             echo ""
-            echo "  --c1 TWRP_IMG      Temporarily boot TWRP, then sideload"
-            echo "  --c2 PATCHED_IMG   Flash pre-patched boot image via fastboot"
-            echo "  --c3 ZIP           ADB sideload recovery ZIP to TWRP"
+            echo "  Flashes a TARGET device from this HOST machine."
+            echo ""
+            echo "  -s SERIAL        Target a specific device by serial number"
+            echo "                   (required when multiple devices are connected)"
+            echo "  --c1 TWRP_IMG    Temporarily boot TWRP on TARGET, then sideload"
+            echo "  --c2 PATCHED_IMG Flash pre-patched boot image to TARGET via fastboot"
+            echo "  --c3 ZIP         ADB sideload recovery ZIP to TARGET in TWRP"
             echo ""
             echo "  No arguments: show interactive menu"
+            echo ""
+            echo "  HOST   = this machine ($(uname -s)/$(uname -m))"
+            echo "  TARGET = the device being flashed (connected via USB/OTG/wireless)"
             ;;
         *)  show_menu ;;
     esac

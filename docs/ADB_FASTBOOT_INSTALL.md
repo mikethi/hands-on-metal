@@ -1,43 +1,63 @@
 # hands-on-metal — ADB Sideload & Fastboot Install Guide (Mode C)
 
-> **Use this guide if your device has NO custom recovery (no TWRP / OrangeFox)
-> and NO GSI slot.**
-> If you already have a custom recovery, see [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md).
-> If Magisk is already installed, see [INSTALL.md](INSTALL.md).
+> **Use this guide if the TARGET device has NO custom recovery (no TWRP /
+> OrangeFox) and NO GSI slot.**
+> If Magisk is already installed on the TARGET, see [INSTALL.md](INSTALL.md).
+> If the TARGET has a custom recovery, see [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md).
+
+---
+
+## Terminology
+
+| Term | Meaning |
+|------|---------|
+| **HOST** | The machine running `host_flash.sh` — a PC (Linux/macOS/Windows) or another Android device (Termux via USB OTG or wireless ADB) |
+| **TARGET** | The device being flashed — connected to HOST via USB, OTG cable, or wireless ADB |
+
+All commands in this guide run **on HOST**. Actions that require
+physical interaction with the TARGET device are clearly labeled
+*"On TARGET:"*.
 
 ---
 
 ## Overview
 
-This guide covers three scenarios for devices without a custom recovery:
+This guide covers three scenarios for TARGET devices without a custom recovery:
 
-| Scenario | What you need | Section |
-|----------|---------------|---------|
-| **C1 — Temporary TWRP boot** | PC + fastboot + unlocked bootloader | [Temporary TWRP via fastboot boot](#c1--temporary-twrp-boot-via-fastboot) |
-| **C2 — Direct fastboot flash** | PC + fastboot + pre-patched boot image | [Direct fastboot flash](#c2--direct-fastboot-flash) |
-| **C3 — ADB sideload** | Custom recovery's sideload mode | [ADB sideload](#c3--adb-sideload-with-custom-recovery) |
+| Scenario | What HOST needs | What TARGET needs | Section |
+|----------|----------------|-------------------|---------|
+| **C1 — Temporary TWRP boot** | `adb` + `fastboot` + TWRP .img | Unlocked bootloader | [C1](#c1--temporary-twrp-boot-via-fastboot) |
+| **C2 — Direct fastboot flash** | `adb` + `fastboot` + pre-patched boot image | Unlocked bootloader | [C2](#c2--direct-fastboot-flash) |
+| **C3 — ADB sideload** | `adb` + recovery ZIP | Custom recovery (TWRP/OrangeFox) | [C3](#c3--adb-sideload-with-custom-recovery) |
 
-> **Important:** Stock Android recovery does NOT accept unsigned ZIPs. ADB
-> sideload only works with a custom recovery (TWRP / OrangeFox) that supports
-> unsigned ZIP flashing. If your device has no custom recovery at all, use
-> scenarios C1 or C2 instead.
+> **Important:** Stock Android recovery on TARGET does NOT accept unsigned
+> ZIPs. ADB sideload only works with a custom recovery that supports
+> unsigned ZIP flashing. If TARGET has no custom recovery, use C1 or C2.
 
 ---
 
 ## Prerequisites (all scenarios)
 
+### On HOST (the machine running the script)
+
 | Requirement | How to check |
 |-------------|-------------|
-| Unlocked bootloader | Device shows unlock warning at boot |
-| USB debugging enabled | Settings → Developer options → USB debugging |
-| ADB + fastboot on PC | `adb version` and `fastboot --version` |
-| USB cable | Data-capable (not charge-only) |
+| ADB + fastboot installed | `adb version` and `fastboot --version` |
+| USB/OTG cable or wireless ADB | `adb devices` shows TARGET |
 
-Install ADB and fastboot if you don't have them:
+Install ADB and fastboot if you don't have them. `host_flash.sh`
+auto-detects the HOST OS and shows the correct instructions, but here's
+the quick reference:
 
 ```bash
 # Linux (Debian/Ubuntu)
 sudo apt-get install android-tools-adb android-tools-fastboot
+
+# Linux (Fedora)
+sudo dnf install android-tools
+
+# Linux (Arch)
+sudo pacman -S android-tools
 
 # macOS (Homebrew)
 brew install android-platform-tools
@@ -45,6 +65,40 @@ brew install android-platform-tools
 # Windows
 # Download from https://developer.android.com/tools/releases/platform-tools
 # Extract and add to PATH
+
+# Termux (Android — flashing another device via OTG or wireless ADB)
+pkg install android-tools
+```
+
+#### HOST-specific notes
+
+| HOST OS | Notes |
+|---------|-------|
+| **Linux** | If `adb devices` shows "no permissions", add a udev rule or run: `sudo usermod -aG plugdev $USER` then log out and back in |
+| **macOS** | Click "Allow" when macOS prompts about USB accessories. If tools not found after install, restart terminal |
+| **Windows** | Install TARGET's USB driver (OEM or Google USB Driver). In PowerShell use `.\adb.exe` instead of `adb` |
+| **Termux** | ADB requires wireless debugging (`adb pair` + `adb connect`) or USB OTG. Fastboot requires USB OTG — wireless does not support fastboot |
+
+### On TARGET (the device being flashed)
+
+| Requirement | How to check |
+|-------------|-------------|
+| Unlocked bootloader (C1, C2) | TARGET shows unlock warning at boot |
+| USB debugging enabled | Settings → Developer options → USB debugging on TARGET |
+| Wireless debugging (Termux HOST) | Settings → Developer options → Wireless debugging on TARGET |
+
+### Multi-device support
+
+When multiple devices are connected, `host_flash.sh` prompts you to
+select the TARGET. You can also specify it directly:
+
+```bash
+# List connected devices
+adb devices
+fastboot devices
+
+# Target a specific device by serial
+bash build/host_flash.sh -s ABC123XYZ --c2 patched_boot.img
 ```
 
 ---
@@ -286,263 +340,388 @@ If Magisk is already installed and you're using Mode A ([INSTALL.md](INSTALL.md)
 
 ## C1 — Temporary TWRP boot via fastboot
 
-This boots TWRP **temporarily** (in RAM only) without permanently installing
-it. After reboot, the stock recovery returns. This is the safest option for
-devices with no recovery.
+HOST boots TWRP **temporarily** (in RAM only) on TARGET without permanently
+installing it. After reboot, TARGET's stock recovery returns. This is the
+safest option for TARGET devices with no recovery.
 
-### Step 1 — Download TWRP for your device
-
-Find your device-specific TWRP image at [twrp.me](https://twrp.me/Devices/)
-or your device's community forums. Download the `.img` file (not the `.zip`).
-
-### Step 2 — Boot into the bootloader
-
-From a running Android system:
+### Using the guided script (recommended)
 
 ```bash
+# On HOST — interactive:
+bash build/host_flash.sh --c1
+
+# On HOST — with TWRP image path:
+bash build/host_flash.sh --c1 twrp-<device>.img
+
+# On HOST — targeting a specific device:
+bash build/host_flash.sh -s ABC123XYZ --c1 twrp-<device>.img
+```
+
+The script auto-detects HOST OS, finds TARGET, shows a confirmation
+banner with TARGET model/serial, and guides you through sideloading.
+
+### Manual steps
+
+#### Step 1 — Download TWRP for TARGET
+
+Find TARGET's TWRP image at [twrp.me](https://twrp.me/Devices/)
+or your device's community forums. Download the `.img` file to HOST.
+
+#### Step 2 — Boot TARGET into the bootloader
+
+```bash
+# On HOST — if TARGET is connected via ADB:
 adb reboot bootloader
+
+# On HOST (Termux) — if TARGET is on wireless ADB:
+adb -s <target_ip>:<port> reboot bootloader
+# Note: TARGET will disconnect from wireless. Reconnect via USB OTG for fastboot.
 ```
 
-Or power off, then hold **Power + Volume Down** (varies by device — see
-[device-specific key combos](#device-specific-bootloader-key-combinations) below).
+Or physically on TARGET: power off, then hold **Power + Volume Down**
+(varies by device — see [device-specific key combos](#device-specific-bootloader-key-combinations)).
 
-### Step 3 — Temporarily boot TWRP
+#### Step 3 — Temporarily boot TWRP on TARGET
 
 ```bash
-# Boot TWRP image without installing it
+# On HOST:
 fastboot boot twrp-<device>-<version>.img
+
+# On HOST — with specific serial:
+fastboot -s ABC123XYZ boot twrp-<device>.img
 ```
 
-> **Note:** Some devices (e.g., Samsung) do not support `fastboot boot`.
-> For Samsung, use Odin or Heimdall to flash TWRP to the recovery partition.
+> **Note:** Some TARGET devices (e.g., Samsung) do not support `fastboot boot`.
+> For Samsung, use Odin or Heimdall on HOST to flash TWRP to the recovery partition.
 
-### Step 4 — Transfer and flash the hands-on-metal ZIP
+#### Step 4 — Transfer and flash the hands-on-metal ZIP to TARGET
 
-Once TWRP is running, you have two options:
+Once TWRP is running on TARGET, you have two options:
 
-**Option A — Push and flash:**
+**Option A — Push from HOST and flash on TARGET:**
 
 ```bash
-# Push the recovery ZIP to the device
+# On HOST:
 adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
 
-# On device: TWRP → Install → select the ZIP → swipe to confirm
+# On TARGET: TWRP → Install → select the ZIP → swipe to confirm
 ```
 
-**Option B — ADB sideload:**
+**Option B — ADB sideload from HOST to TARGET:**
 
 ```bash
-# On device: TWRP → Advanced → ADB Sideload → swipe to start
+# On TARGET: TWRP → Advanced → ADB Sideload → swipe to start
 
-# On PC:
+# On HOST:
 adb sideload dist/hands-on-metal-recovery-v2.0.0.zip
 ```
 
-### Step 5 — Reboot
+#### Step 5 — Reboot
 
-The installer flashes the patched boot image and reboots automatically.
-After reboot, open the Magisk app to confirm root.
+The installer flashes the patched boot image on TARGET and reboots
+automatically. After reboot, on TARGET, open the Magisk app to confirm root.
 
 ---
 
 ## C2 — Direct fastboot flash
 
-If you cannot boot any recovery at all, you can patch the boot image on your
-PC and flash it directly via fastboot. This bypasses recovery entirely.
+HOST patches the boot image and flashes it directly to TARGET via fastboot.
+No recovery needed on TARGET.
 
-### Step 1 — Extract your current boot image
-
-**Option A — From a factory image:**
+### Using the guided script (recommended)
 
 ```bash
-# Download your device's factory image from the OEM
+# On HOST — interactive:
+bash build/host_flash.sh --c2
+
+# On HOST — with patched image:
+bash build/host_flash.sh --c2 patched_boot.img
+
+# On HOST — targeting a specific device:
+bash build/host_flash.sh -s ABC123XYZ --c2 patched_boot.img
+```
+
+### Manual steps
+
+#### Step 1 — Extract TARGET's current boot image (on HOST)
+
+**Option A — From a factory image (on HOST):**
+
+```bash
+# On HOST — download TARGET device's factory image from the OEM
 # Google: https://developers.google.com/android/images
 # Extract boot.img (or init_boot.img for Android 13+)
 unzip factory-image.zip '*/image-*.zip'
 unzip image-*.zip boot.img init_boot.img
 ```
 
-**Option B — Via ADB from a running device (requires root or permissive adb):**
+**Option B — Via ADB from TARGET (requires root on TARGET):**
 
 ```bash
-# Find the boot partition
+# On HOST — find TARGET's boot partition:
 adb shell ls /dev/block/bootdevice/by-name/ 2>/dev/null || \
     adb shell ls /dev/block/by-name/
 
-# Copy boot image (requires root shell)
+# On HOST — copy boot image from TARGET (requires root shell on TARGET):
 adb shell su -c "dd if=/dev/block/bootdevice/by-name/boot of=/sdcard/boot_original.img"
 adb pull /sdcard/boot_original.img
 ```
 
-### Step 2 — Patch with Magisk on PC
+#### Step 2 — Patch with Magisk (on HOST or a helper device)
 
 Install the Magisk app on an emulator or another device, or use the Magisk
 CLI:
 
 ```bash
-# Transfer boot.img to a device with Magisk installed
+# On HOST — transfer boot.img to a device with Magisk installed:
 adb push boot.img /sdcard/Download/
 
-# On that device: Magisk app → Install → Select and Patch a File
+# On that helper device: Magisk app → Install → Select and Patch a File
 # → select boot.img from Downloads
 # → patched file saved to /sdcard/Download/magisk_patched-*.img
 
-# Pull patched image back to PC
+# On HOST — pull patched image back:
 adb pull /sdcard/Download/magisk_patched-*.img patched_boot.img
 ```
 
-### Step 3 — Boot into bootloader and flash
+#### Step 3 — Flash TARGET from HOST
 
 ```bash
-# Reboot target device to bootloader
+# On HOST — reboot TARGET to bootloader:
 adb reboot bootloader
 
-# Wait for fastboot mode
-fastboot devices   # verify device is listed
+# On HOST — verify TARGET is listed:
+fastboot devices
 
-# Flash the patched boot image
+# On HOST — flash the patched boot image to TARGET:
 # For devices with boot partition:
 fastboot flash boot patched_boot.img
 
 # For Android 13+ devices with init_boot:
 fastboot flash init_boot patched_init_boot.img
 
-# Reboot
+# On HOST — reboot TARGET:
 fastboot reboot
 ```
 
-### Step 4 — Verify
+#### Step 4 — Verify (on TARGET)
 
-After reboot, install and open the Magisk app to confirm root is active.
+After reboot, on TARGET, install and open the Magisk app to confirm root.
 
 ---
 
 ## C3 — ADB sideload (with custom recovery)
 
-> **This only works if you have a custom recovery (TWRP / OrangeFox)
-> installed.** Stock recovery rejects unsigned ZIPs.
+> **This only works if TARGET has a custom recovery (TWRP / OrangeFox).**
+> Stock recovery rejects unsigned ZIPs.
 
-### Step 1 — Boot into recovery
+### Using the guided script (recommended)
 
 ```bash
-adb reboot recovery
+# On HOST — interactive:
+bash build/host_flash.sh --c3
+
+# On HOST — with ZIP path:
+bash build/host_flash.sh --c3 dist/hands-on-metal-recovery-v2.0.0.zip
+
+# On HOST — targeting a specific device:
+bash build/host_flash.sh -s ABC123XYZ --c3 recovery.zip
 ```
 
-Or use the device-specific key combo (see below).
+### Manual steps
 
-### Step 2 — Start ADB sideload mode
+#### Step 1 — Boot TARGET into recovery
 
-In TWRP / OrangeFox:
+```bash
+# On HOST:
+adb reboot recovery
+
+# On HOST (Termux, wireless ADB):
+adb -s <target_ip>:<port> reboot recovery
+```
+
+Or use the device-specific key combo on TARGET (see below).
+
+#### Step 2 — Start ADB sideload mode on TARGET
+
+On TARGET device (physical interaction):
 
 1. Tap **Advanced** (TWRP) or **Tools** (OrangeFox)
 2. Tap **ADB Sideload**
 3. Swipe to start sideload mode
 
-### Step 3 — Sideload the ZIP
+#### Step 3 — Sideload from HOST to TARGET
 
 ```bash
+# On HOST:
 adb sideload dist/hands-on-metal-recovery-v2.0.0.zip
+
+# On HOST — with specific serial:
+adb -s ABC123XYZ sideload dist/hands-on-metal-recovery-v2.0.0.zip
 ```
 
-The guided installer runs automatically — same as flashing the ZIP directly
-from recovery storage.
+The guided installer runs on TARGET automatically — same as flashing the
+ZIP directly from recovery storage.
 
-### Step 4 — Reboot
+#### Step 4 — Reboot
 
-The installer reboots the device after flashing. Open Magisk app to confirm root.
+The installer reboots TARGET after flashing. On TARGET, open the Magisk
+app to confirm root.
 
 ---
 
 ## Useful ADB commands reference
 
-### Rebooting into different modes
+All commands below run **on HOST**. Replace `adb` with
+`adb -s <serial>` when multiple devices are connected, or when running
+from Termux with wireless debugging.
+
+### Rebooting TARGET into different modes
 
 ```bash
-# Reboot to recovery (custom or stock)
+# Reboot TARGET to recovery (custom or stock)
 adb reboot recovery
 
-# Reboot to bootloader / fastboot mode
+# Reboot TARGET to bootloader / fastboot mode
 adb reboot bootloader
 
-# Reboot to system (normal boot)
+# Reboot TARGET to system (normal boot)
 adb reboot
 
-# Reboot to download mode (Samsung only)
+# Reboot TARGET to download mode (Samsung only)
 adb reboot download
 ```
 
-### On-device diagnostics via ADB shell
+### Diagnosing TARGET via ADB shell
 
 ```bash
-# Check if device is rooted
+# Check if TARGET is rooted
 adb shell su -c "id"
 # Expected: uid=0(root)
 
-# List available partitions
+# List available partitions on TARGET
 adb shell ls -la /dev/block/bootdevice/by-name/ 2>/dev/null || \
     adb shell ls -la /dev/block/by-name/
 
-# Check current boot slot (A/B devices)
+# Check TARGET's current boot slot (A/B devices)
 adb shell getprop ro.boot.slot_suffix
 
-# Check Android version and API level
+# Check TARGET's Android version and API level
 adb shell getprop ro.build.version.release
 adb shell getprop ro.build.version.sdk
 
-# Check security patch level
+# Check TARGET's security patch level
 adb shell getprop ro.build.version.security_patch
 
-# Check device model and codename
+# Check TARGET's model and codename
 adb shell getprop ro.product.model
 adb shell getprop ro.product.device
 
-# Check if init_boot partition exists (Android 13+)
+# Check if TARGET has init_boot partition (Android 13+)
 adb shell ls /dev/block/bootdevice/by-name/init_boot* 2>/dev/null || \
     adb shell ls /dev/block/by-name/init_boot* 2>/dev/null || \
-    echo "No init_boot partition found — use boot instead"
+    echo "No init_boot partition on TARGET — use boot instead"
 
-# Check bootloader lock state
+# Check TARGET's bootloader lock state
 adb shell getprop ro.boot.verifiedbootstate
 adb shell getprop ro.boot.flash.locked
 ```
 
-### Transferring files
+### Transferring files from HOST to TARGET
 
 ```bash
-# Push the hands-on-metal ZIP to device
+# Push the hands-on-metal ZIP from HOST to TARGET
 adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
 
-# Push a boot image to device
+# Push a boot image from HOST to TARGET
 adb push boot.img /sdcard/Download/
 
-# Pull logs from device after install
+# Pull logs from TARGET to HOST after install
 adb pull /sdcard/hands-on-metal/logs/ ./hom-logs/
 
-# Pull hardware data
+# Pull hardware data from TARGET to HOST
 adb pull /sdcard/hands-on-metal/live_dump/ ./hom-dump/
 ```
 
-### Emergency recovery commands
+### Emergency recovery commands (run on HOST)
 
 ```bash
-# If device is bootlooping — get to fastboot
-# Power off (hold power 10+ seconds), then hold Power + Volume Down
+# If TARGET is bootlooping — get TARGET to fastboot
+# On TARGET: power off (hold power 10+ seconds), then hold Power + Volume Down
 
-# From fastboot: flash stock boot image to recover
+# On HOST — flash stock boot image to TARGET to recover:
 fastboot flash boot stock_boot.img
 fastboot reboot
 
-# If device is in fastboot and you have a TWRP image:
+# On HOST — if TARGET is in fastboot and you have a TWRP image:
 fastboot boot twrp.img
-# Then from TWRP, flash stock firmware or restore backup
+# Then from TWRP on TARGET, flash stock firmware or restore backup
+```
+
+---
+
+## Device-to-device flashing (Termux HOST → TARGET)
+
+When HOST is an Android device running Termux and TARGET is another
+Android device:
+
+| Connection | ADB? | Fastboot? | Notes |
+|-----------|:---:|:---:|---|
+| **Wireless debugging** | ✓ | ✗ | TARGET must have Android 11+ with wireless debugging enabled |
+| **USB OTG cable** | ✓ | ✓ | Physical cable from HOST's USB-C/micro to TARGET |
+
+### Wireless ADB setup (Termux → TARGET)
+
+```bash
+# On TARGET: Settings → Developer options → Wireless debugging → enable
+# On TARGET: tap "Pair device with pairing code" → note the ip:port and code
+
+# On HOST (Termux):
+pkg install android-tools
+
+# Pair with TARGET (one-time):
+adb pair 192.168.1.100:37123
+# Enter pairing code when prompted
+
+# Connect to TARGET:
+adb connect 192.168.1.100:42456
+
+# Verify TARGET is connected:
+adb devices
+# Should show: 192.168.1.100:42456   device
+
+# Now run any Mode C command:
+bash build/host_flash.sh --c3 recovery.zip
+```
+
+> **Limitation:** Wireless ADB does not support fastboot. If you need
+> C1 or C2, you must use a USB OTG cable.
+
+### USB OTG setup (Termux → TARGET)
+
+```bash
+# On HOST (Termux):
+pkg install android-tools
+
+# Connect TARGET via USB OTG cable
+# TARGET will prompt "Allow USB debugging?" — tap Allow
+
+# Verify:
+adb devices
+
+# Fastboot also works via OTG:
+adb reboot bootloader
+fastboot devices
 ```
 
 ---
 
 ## Device-specific bootloader key combinations
 
-| Device family | Bootloader (fastboot) | Recovery |
-|--------------|----------------------|----------|
+These are physical actions **on TARGET**:
+
+| TARGET device family | Bootloader (fastboot) | Recovery |
+|---------------------|----------------------|----------|
 | Google Pixel | Power + Vol Down | Power + Vol Down → select "Recovery" |
 | Samsung | Power + Vol Down + Bixby/Home | Power + Vol Up + Bixby/Home |
 | OnePlus | Power + Vol Up + Vol Down | Power + Vol Down → select "Recovery" |
@@ -550,25 +729,25 @@ fastboot boot twrp.img
 | Motorola | Power + Vol Down | Power + Vol Down → select "Recovery" |
 | ASUS | Power + Vol Down | Power + Vol Up |
 | LG | Power + Vol Down (hold until logo appears twice) | Power + Vol Down + Vol Up |
-| Sony | Power + Vol Down (with USB connected) | Power + Vol Down → select "Recovery" |
+| Sony | Power + Vol Down (with USB connected to HOST) | Power + Vol Down → select "Recovery" |
 
-> After entering fastboot mode, the device screen shows "FASTBOOT" or
-> "Fastboot Mode". Use `fastboot devices` on your PC to verify the connection.
+> After entering fastboot mode, TARGET's screen shows "FASTBOOT" or
+> "Fastboot Mode". On HOST, run `fastboot devices` to verify the connection.
 
 ---
 
 ## Can I use ADB sideload without any recovery?
 
-**No.** ADB sideload requires a recovery environment (stock or custom) that
-implements the sideload protocol. Without any recovery partition:
+**No.** ADB sideload requires a recovery environment on TARGET (stock or
+custom) that implements the sideload protocol. Without any recovery on TARGET:
 
-- Use **C1** (temporary TWRP boot via `fastboot boot`) if your device supports it.
-- Use **C2** (direct fastboot flash) to patch and flash the boot image from your PC.
+- Use **C1** (temporary TWRP boot via `fastboot boot` from HOST) if TARGET supports it.
+- Use **C2** (direct fastboot flash from HOST) to patch and flash the boot image.
 
 Stock Android recovery supports `adb sideload` but **only for OEM-signed OTA
 packages**. The hands-on-metal recovery ZIP is not OEM-signed, so stock
-recovery will reject it. You need TWRP / OrangeFox for sideloading unsigned
-ZIPs.
+recovery will reject it. You need TWRP / OrangeFox on TARGET for sideloading
+unsigned ZIPs.
 
 ---
 
