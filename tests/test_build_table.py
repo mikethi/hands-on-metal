@@ -33,7 +33,7 @@ class BuildTableTests(unittest.TestCase):
     def test_import_iomem_parses_valid_rows_only(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','~/tmp')")
         run_id = cur.lastrowid
         db.commit()
 
@@ -65,7 +65,7 @@ class BuildTableTests(unittest.TestCase):
     def test_import_interrupts_and_lsmod_handle_noise(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','~/tmp')")
         run_id = cur.lastrowid
         db.commit()
 
@@ -114,7 +114,7 @@ class BuildTableTests(unittest.TestCase):
     def test_import_dt_nodes_index_files_and_update_fill_rates(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','~/tmp')")
         run_id = cur.lastrowid
         cur.execute(
             "INSERT INTO hardware_block (run_id, name, category, hal_interface) VALUES (?,?,?,?)",
@@ -160,7 +160,7 @@ class BuildTableTests(unittest.TestCase):
     def test_update_fill_rates_rejects_invalid_identifiers(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','~/tmp')")
         run_id = cur.lastrowid
         cur.execute(
             "INSERT INTO hardware_block (run_id, name, category) VALUES (?,?,?)",

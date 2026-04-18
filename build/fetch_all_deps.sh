@@ -71,8 +71,8 @@ else
     exit 1
 fi
 
-# ── portable temp directory (Termux sets $TMPDIR; /tmp may not exist) ─
-_TMP="${TMPDIR:-/tmp}"
+# ── portable temp directory (Termux sets $TMPDIR; fallback is $HOME/tmp) ─
+_TMP="${TMPDIR:-${HOME:-.}/tmp}"
 mkdir -p "$_TMP"
 
 # ── helpers ───────────────────────────────────────────────────
