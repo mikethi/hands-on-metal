@@ -47,14 +47,15 @@ trusted PC.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-There are **two install paths**:
+There are **three install paths**:
 
 | Path | When to use | How |
 |------|-------------|-----|
 | **Mode A — Magisk module** | Magisk is already installed | Flash the module ZIP via the Magisk app |
 | **Mode B — Recovery ZIP** | No Magisk yet; you have TWRP or OrangeFox | Flash the recovery ZIP from recovery |
+| **Mode C — ADB/Fastboot** | No recovery; bootloader unlocked; have a PC | Temporary TWRP boot, ADB sideload, or direct fastboot flash |
 
-Both paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) for a full decision tree.
+All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) for a full decision tree.
 
 ---
 
@@ -145,6 +146,7 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 | [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) | **Start here** — choose Magisk path vs recovery path based on your device state |
 | [docs/INSTALL.md](docs/INSTALL.md) | Mode A: install via the Magisk app |
 | [docs/RECOVERY_INSTALL.md](docs/RECOVERY_INSTALL.md) | Mode B: install via TWRP / OrangeFox |
+| [docs/ADB_FASTBOOT_INSTALL.md](docs/ADB_FASTBOOT_INSTALL.md) | Mode C: install via ADB sideload / fastboot (no recovery needed) |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every known failure mode with decision trees and remediation — including sandbox, CI, and Termux environments |
 | [docs/MAINTAINER.md](docs/MAINTAINER.md) | How to obtain optional binaries, cut releases, and manage the partition index |
 | [docs/SUPPORT_POLICY.md](docs/SUPPORT_POLICY.md) | Supported device families and Android versions |
