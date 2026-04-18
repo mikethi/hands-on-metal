@@ -526,6 +526,43 @@ partition naming, and boot security configuration"
 
     ux_print "  SoC        : $soc_mfr $soc_model ($platform)"
 
+    # ── 9b. Bootloader / radio versions + Tensor ARB flag ─────
+    # Captured here so anti_rollback.sh can compare against any
+    # local factory ZIP and warn about the May-2025 Tensor
+    # bootloader/radio anti-rollback brick risk on Pixel 6/8 series.
+    # See https://xdaforums.com/t/may-2025-and-newer-beware-of-permanent-bricks-…-pixel-6-6-pro-6a-8-8-pro-8a.4735780/
+
+    local bootloader_ver baseband_ver
+    bootloader_ver=$(_prop ro.bootloader)
+    [ -z "$bootloader_ver" ] && bootloader_ver=$(_prop ro.boot.bootloader)
+    baseband_ver=$(_prop ro.build.expect.baseband)
+    [ -z "$baseband_ver" ] && baseband_ver=$(_prop gsm.version.baseband)
+
+    local tensor_arb_affected="false"
+    case "$device" in
+        # Pixel 6 / 6 Pro / 6a — Tensor G1
+        oriole|raven|bluejay) tensor_arb_affected="true" ;;
+        # Pixel 8 / 8 Pro / 8a — Tensor G3
+        # (Pixel 7 series / Tensor G2 were NOT covered by the
+        # May-2025 ARB bump described in XDA thread 4735780.)
+        shiba|husky|akita)    tensor_arb_affected="true" ;;
+    esac
+
+    _reg_set device HOM_DEV_BOOTLOADER          "$bootloader_ver"
+    _reg_set device HOM_DEV_BASEBAND            "$baseband_ver"
+    _reg_set device HOM_DEV_TENSOR_ARB_AFFECTED "$tensor_arb_affected"
+
+    log_var "HOM_DEV_BOOTLOADER"          "$bootloader_ver"      "ro.bootloader (current bootloader version string)"
+    log_var "HOM_DEV_BASEBAND"            "$baseband_ver"        "current baseband / radio version string"
+    log_var "HOM_DEV_TENSOR_ARB_AFFECTED" "$tensor_arb_affected" "true on Tensor Pixels subject to bootloader/radio ARB fuse-bumps"
+
+    ux_print "  Bootloader : ${bootloader_ver:-unknown}"
+    ux_print "  Baseband   : ${baseband_ver:-unknown}"
+    if [ "$tensor_arb_affected" = "true" ]; then
+        ux_print "  ⚠  Tensor Pixel — bootloader/radio downgrades can permanently brick this device"
+        ux_print "     (anti_rollback.sh will cross-check any local factory ZIP)"
+    fi
+
     # ── 10. Write human-readable profile report ───────────────
 
     {
@@ -542,6 +579,9 @@ partition naming, and boot security configuration"
         echo "Dynamic parts  : $dyn_parts"
         echo "Treble         : $treble_enabled (VNDK $treble_vintf_version)"
         echo "AVB            : v$avb_version state=$avb_state"
+        echo "Bootloader     : ${bootloader_ver:-unknown}"
+        echo "Baseband       : ${baseband_ver:-unknown}"
+        echo "Tensor ARB     : $tensor_arb_affected"
         echo "Boot partition : $boot_part  (source: $boot_part_source)"
         echo "  boot dev     : $(_fmt_dev "$boot_dev" "$boot_dev_source")"
         echo "  init_boot    : $(_fmt_dev "$init_boot_dev" "$init_boot_source")"
