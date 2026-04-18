@@ -607,7 +607,7 @@ script_completion_success() {
             echo "Built the hardware-map SQLite database from collected data."
             ;;
         pipeline/failure_analysis.py)
-            echo "Analysed install logs and identified failure patterns."
+            echo "Analyzed install logs and identified failure patterns."
             ;;
         pipeline/github_notify.py)
             echo "Posted analysis results as a GitHub issue comment."
@@ -782,7 +782,7 @@ script_next_steps() {
             echo "  → UX helpers are loaded. They will be used automatically by other scripts."
             ;;
         magisk-module/collect.sh)
-            echo "  → Hardware data collected. Run the pipeline scripts to parse and analyse the data."
+            echo "  → Hardware data collected. Run the pipeline scripts to parse and analyze the data."
             echo "  → Start with 'pipeline/parse_logs.py' or 'pipeline/build_table.py'."
             ;;
         magisk-module/customize.sh)
@@ -798,7 +798,7 @@ script_next_steps() {
             echo "  → Termux is set up. You can now run the full collection (magisk-module/collect.sh)."
             ;;
         recovery-zip/collect_recovery.sh)
-            echo "  → Recovery data collected. Run the pipeline scripts to parse and analyse it."
+            echo "  → Recovery data collected. Run the pipeline scripts to parse and analyze it."
             ;;
         pipeline/build_table.py)
             echo "  → Database built. Generate a report with 'pipeline/report.py'."
