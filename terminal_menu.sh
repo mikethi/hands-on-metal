@@ -148,6 +148,44 @@ prereq_provider() {
     esac
 }
 
+# Human-readable description of what a script does.
+script_description() {
+    local rel="$1"
+    case "$rel" in
+        build/build_offline_zip.sh)        echo "Build flashable offline ZIPs (Magisk module + recovery)" ;;
+        build/fetch_all_deps.sh)           echo "Download Magisk APK, busybox, and create offline bundle" ;;
+        core/anti_rollback.sh)             echo "Check SPL / AVB rollback risk before flashing" ;;
+        core/apply_defaults.sh)            echo "Apply device-family defaults from partition index" ;;
+        core/boot_image.sh)                echo "Acquire the boot or init_boot image from the device" ;;
+        core/candidate_entry.sh)           echo "Create a candidate entry for an unknown device" ;;
+        core/device_profile.sh)            echo "Detect device model, partitions, AVB, and Treble support" ;;
+        core/flash.sh)                     echo "Flash patched boot image to device and verify" ;;
+        core/logging.sh)                   echo "Shared logging framework (sourced by other scripts)" ;;
+        core/magisk_patch.sh)              echo "Patch boot image with Magisk for root access" ;;
+        core/privacy.sh)                   echo "Privacy-by-default PII redaction helpers" ;;
+        core/share.sh)                     echo "Create a shareable diagnostic bundle (PII redacted)" ;;
+        core/state_machine.sh)             echo "Persistent reboot-safe workflow state tracker" ;;
+        core/ux.sh)                        echo "User-experience output helpers (TWRP / shell / service)" ;;
+        magisk-module/collect.sh)          echo "Read-only hardware data collection on rooted device" ;;
+        magisk-module/customize.sh)        echo "Main Magisk module installation hook (full workflow)" ;;
+        magisk-module/env_detect.sh)       echo "Detect shell, tools, Python, Termux on device" ;;
+        magisk-module/service.sh)          echo "Boot service: env detect, Termux setup, collection" ;;
+        magisk-module/setup_termux.sh)     echo "Install and bootstrap Termux with required packages" ;;
+        recovery-zip/collect_recovery.sh)  echo "Recovery-mode collection with read-only mounts" ;;
+        pipeline/build_table.py)           echo "Build hardware-map SQLite database from collected data" ;;
+        pipeline/failure_analysis.py)      echo "Analyse install logs for failure patterns" ;;
+        pipeline/github_notify.py)         echo "Post analysis results as a GitHub issue comment" ;;
+        pipeline/parse_logs.py)            echo "Parse master log and run-manifest files" ;;
+        pipeline/parse_manifests.py)       echo "Parse VINTF / sysconfig / permissions XML manifests" ;;
+        pipeline/parse_pinctrl.py)         echo "Parse pinctrl debug files into database" ;;
+        pipeline/parse_symbols.py)         echo "Parse vendor library symbols and ELF sections" ;;
+        pipeline/report.py)                echo "Generate HTML hardware report from database" ;;
+        pipeline/unpack_images.py)         echo "Unpack boot / vendor-boot images and extract ramdisk" ;;
+        pipeline/upload.py)                echo "Upload diagnostic bundle to GitHub Gist" ;;
+        *)                                 echo "" ;;
+    esac
+}
+
 # Check whether a script's work is already done (not needed).
 is_already_done() {
     local rel="$1"
@@ -270,7 +308,98 @@ refresh_status() {
     done
 }
 
-# ── Menu display ─────────────────────────────────────────────
+# ── Suggested next step ──────────────────────────────────────
+# Picks the best "ready" script that would unblock the most
+# "missing" (blocked) scripts.  Falls back to the first ready
+# script in list order when nothing is blocked.
+#
+# Sets globals:
+#   SUGGESTION_IDX  — 0-based index into SCRIPT_LABELS (-1 = none)
+#   SUGGESTION_DESC — human-readable reason for the suggestion
+compute_suggestion() {
+    SUGGESTION_IDX=-1
+    SUGGESTION_DESC=""
+
+    # Collect which providers are needed by blocked scripts
+    local -A provider_demand=()
+    local i rel prereqs prereq provider
+    for i in "${!SCRIPT_LABELS[@]}"; do
+        if [ "${ITEM_STATUS[$i]}" = "missing" ]; then
+            rel="${SCRIPT_LABELS[$i]}"
+            prereqs="$(get_prereqs_for_script "$rel")"
+            for prereq in $prereqs; do
+                if ! check_prereq "$prereq" 2>/dev/null; then
+                    provider="$(prereq_provider "$prereq")"
+                    if [ -n "$provider" ]; then
+                        provider_demand["$provider"]=$(( ${provider_demand["$provider"]:-0} + 1 ))
+                    fi
+                fi
+            done
+        fi
+    done
+
+    # Among ready (not done) scripts, find the one that is a provider
+    # for the most blocked items
+    local best_idx=-1 best_score=0 best_desc=""
+    for i in "${!SCRIPT_LABELS[@]}"; do
+        if [ "${ITEM_STATUS[$i]}" = "ready" ]; then
+            rel="${SCRIPT_LABELS[$i]}"
+            local score="${provider_demand["$rel"]:-0}"
+            if [ "$score" -gt "$best_score" ]; then
+                best_score="$score"
+                best_idx="$i"
+                best_desc="$(script_description "$rel")"
+                if [ "$score" -eq 1 ]; then
+                    best_desc="$best_desc — unblocks $score other option"
+                else
+                    best_desc="$best_desc — unblocks $score other options"
+                fi
+            fi
+        fi
+    done
+
+    # If no provider-based match, pick the first ready script
+    if [ "$best_idx" -eq -1 ]; then
+        for i in "${!SCRIPT_LABELS[@]}"; do
+            if [ "${ITEM_STATUS[$i]}" = "ready" ]; then
+                best_idx="$i"
+                best_desc="$(script_description "${SCRIPT_LABELS[$i]}")"
+                break
+            fi
+        done
+    fi
+
+    SUGGESTION_IDX="$best_idx"
+    SUGGESTION_DESC="$best_desc"
+}
+
+# Print the suggestion line (reused by both menus).
+print_suggestion_line() {
+    compute_suggestion
+    echo
+    if [ "$SUGGESTION_IDX" -ge 0 ]; then
+        local num="$(( SUGGESTION_IDX + 1 ))"
+        local rel="${SCRIPT_LABELS[$SUGGESTION_IDX]}"
+        printf " %ss) suggested next: option %d (%s)%s\n" \
+            "$CLR_LIGHT_GREEN" "$num" "$rel" "$CLR_RESET"
+        printf "    %s%s%s\n" "$CLR_LIGHT_GREEN" "$SUGGESTION_DESC" "$CLR_RESET"
+    else
+        local all_done=true
+        for i in "${!ITEM_STATUS[@]}"; do
+            if [ "${ITEM_STATUS[$i]}" != "done" ]; then
+                all_done=false
+                break
+            fi
+        done
+        if [ "$all_done" = true ]; then
+            printf " %ss) all steps complete — nothing to suggest%s\n" \
+                "$CLR_DARK_GREEN" "$CLR_RESET"
+        else
+            printf " %ss) no runnable suggestion — resolve external prerequisites first%s\n" \
+                "$CLR_YELLOW" "$CLR_RESET"
+        fi
+    fi
+}
 print_menu() {
     refresh_status
 
@@ -307,6 +436,8 @@ print_menu() {
         printf "\n"
     done
 
+    echo
+    print_suggestion_line
     echo
     echo " p) check prerequisites (detailed)"
     echo " r) refresh script list"
@@ -382,8 +513,21 @@ print_prereq_submenu() {
     done
 
     echo "═══════════════════════════════════════════════════════"
+    print_suggestion_line
     echo
-    read -r -p "Press Enter to return to main menu..."
+    echo " Enter) return to main menu"
+    echo
+    read -r -p "Choose (s or Enter): " sub_choice
+    case "$sub_choice" in
+        s|S)
+            if [ "$SUGGESTION_IDX" -ge 0 ]; then
+                run_selected "$SUGGESTION_IDX"
+            else
+                echo "No suggestion available."
+            fi
+            ;;
+        *) ;;
+    esac
 }
 
 # ── Run a selected script ────────────────────────────────────
@@ -453,6 +597,14 @@ main() {
                 ;;
             p|P)
                 print_prereq_submenu
+                continue
+                ;;
+            s|S)
+                if [ "$SUGGESTION_IDX" -ge 0 ]; then
+                    run_selected "$SUGGESTION_IDX"
+                else
+                    echo "No suggestion available."
+                fi
                 continue
                 ;;
             ''|*[!0-9]*)
