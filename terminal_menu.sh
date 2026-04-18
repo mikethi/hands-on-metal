@@ -15,6 +15,17 @@
 
 set -eu
 
+# When launched from "curl … | bash" (e.g. via setup.sh), stdin is the
+# exhausted pipe — not the terminal.  Reopen it from /dev/tty so that
+# interactive `read` calls work.
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+    exec < /dev/tty
+elif [ ! -t 0 ]; then
+    echo "Error: no interactive terminal available (stdin is not a tty)." >&2
+    echo "Run 'bash terminal_menu.sh' from an interactive terminal session." >&2
+    exit 1
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── dependency check (runs once per session) ──────────────────
@@ -573,13 +584,19 @@ print_menu() {
                 ;;
         esac
 
-        printf "%s%2d) [%s] %s %s%s" \
+        printf "%s%2d) [%s] %s %s%s\n" \
             "$color" "$((i + 1))" "${SCRIPT_TYPES[$i]}" "${SCRIPT_LABELS[$i]}" "$status_char" "$CLR_RESET"
 
-        if [ "${ITEM_STATUS[$i]}" = "missing" ]; then
-            printf "\n      needs: %s" "${MISSING_INFO[$i]}"
+        # Always show the description so every option is self-documenting
+        local desc
+        desc="$(script_description "${SCRIPT_LABELS[$i]}")"
+        if [ -n "$desc" ]; then
+            printf "      %s\n" "$desc"
         fi
-        printf "\n"
+
+        if [ "${ITEM_STATUS[$i]}" = "missing" ]; then
+            printf "      needs: %s\n" "${MISSING_INFO[$i]}"
+        fi
     done
 
     echo
@@ -664,6 +681,8 @@ print_prereq_submenu() {
     echo " Enter) return to main menu"
     echo
     read -r -p "Choose (s or Enter): " sub_choice
+    echo "  You entered: $sub_choice"
+    sub_choice="${sub_choice//[!a-zA-Z0-9]/}"
     case "$sub_choice" in
         s|S)
             if [ "$SUGGESTION_IDX" -ge 0 ]; then
@@ -1058,6 +1077,9 @@ run_selected() {
     echo
     echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
     read -r -a args_array -p "Arguments (optional): "
+    if [ "${#args_array[@]}" -gt 0 ]; then
+        echo "  You entered: ${args_array[*]}"
+    fi
 
     echo
     echo "Running..."
@@ -1149,6 +1171,11 @@ main() {
     while true; do
         print_menu
         read -r -p "Choose an option: " choice
+        echo "  You entered: $choice"
+        # Strip non-alphanumeric bytes: invisible control characters, Unicode
+        # zero-width / formatting chars, trailing CR, ANSI remnants, etc. that
+        # some terminal emulators and input methods inject on Android / Termux.
+        choice="${choice//[!a-zA-Z0-9]/}"
 
         case "$choice" in
             q|Q)
