@@ -553,7 +553,7 @@ _classify_local_image() {
 }
 
 _confirm_yn() {
-    # $1 = varname (unused), $2 = prompt
+    # $1 = prompt text.  Returns 0 for yes (empty / Y / y / yes), 1 otherwise.
     local prompt="$1" answer=""
     if [ -t 0 ]; then
         printf '\n%s [Y/n]: ' "$prompt" >&2

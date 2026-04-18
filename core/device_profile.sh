@@ -231,15 +231,17 @@ partition naming, and boot security configuration"
         esac
     fi
 
-    _reg_set device HOM_DEV_BOOT_PART       "$boot_part"
-    _reg_set device HOM_DEV_BOOT_DEV        "${boot_dev:-MISSING}"
-    _reg_set device HOM_DEV_INIT_BOOT_DEV   "${init_boot_dev:-MISSING}"
-    _reg_set device HOM_DEV_VENDOR_BOOT_DEV "${vendor_boot_dev:-MISSING}"
+    _reg_set device HOM_DEV_BOOT_PART        "$boot_part"
+    _reg_set device HOM_DEV_BOOT_PART_SOURCE "$boot_part_source"
+    _reg_set device HOM_DEV_BOOT_DEV         "${boot_dev:-MISSING}"
+    _reg_set device HOM_DEV_INIT_BOOT_DEV    "${init_boot_dev:-MISSING}"
+    _reg_set device HOM_DEV_VENDOR_BOOT_DEV  "${vendor_boot_dev:-MISSING}"
 
-    log_var "HOM_DEV_BOOT_PART"       "$boot_part"          "partition to patch with Magisk (boot or init_boot)"
-    log_var "HOM_DEV_BOOT_DEV"        "${boot_dev:-MISSING}" "block device path for boot partition"
-    log_var "HOM_DEV_INIT_BOOT_DEV"   "${init_boot_dev:-MISSING}" "block device path for init_boot partition"
-    log_var "HOM_DEV_VENDOR_BOOT_DEV" "${vendor_boot_dev:-MISSING}" "block device path for vendor_boot partition"
+    log_var "HOM_DEV_BOOT_PART"        "$boot_part"          "partition to patch with Magisk (boot or init_boot)"
+    log_var "HOM_DEV_BOOT_PART_SOURCE" "$boot_part_source"   "how HOM_DEV_BOOT_PART was determined (block_device | first_api_level=N | default)"
+    log_var "HOM_DEV_BOOT_DEV"         "${boot_dev:-MISSING}" "block device path for boot partition"
+    log_var "HOM_DEV_INIT_BOOT_DEV"    "${init_boot_dev:-MISSING}" "block device path for init_boot partition"
+    log_var "HOM_DEV_VENDOR_BOOT_DEV"  "${vendor_boot_dev:-MISSING}" "block device path for vendor_boot partition"
 
     ux_print "  Boot part  : $boot_part  (device: ${boot_dev:-not found})"
     ux_print "  init_boot  : ${init_boot_dev:-not found}"
