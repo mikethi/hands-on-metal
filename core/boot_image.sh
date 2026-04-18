@@ -741,7 +741,7 @@ _download_factory_boot_image() {
     if [ -z "$inner_zip" ]; then
         # Some factory ZIPs place boot.img directly at the top level
         log_info "No inner image-*.zip found; trying direct extraction"
-        if unzip -jo "$factory_zip" "*/${boot_part}.img" \
+        if unzip -joq "$factory_zip" "*/${boot_part}.img" \
                 -d "$extract_dir" 2>/dev/null; then
             local found="$extract_dir/${boot_part}.img"
             if [ -f "$found" ] && [ -s "$found" ]; then
@@ -792,7 +792,7 @@ _download_factory_boot_image() {
         ux_print "  ✓  Build match: $inner_build"
     fi
 
-    unzip -jo "$factory_zip" "$inner_zip" -d "$extract_dir" 2>/dev/null || {
+    unzip -joq "$factory_zip" "$inner_zip" -d "$extract_dir" 2>/dev/null || {
         log_warn "Failed to extract inner ZIP from factory image"
         [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
         rm -rf "$extract_dir"
@@ -803,7 +803,7 @@ _download_factory_boot_image() {
     inner_zip_path="$extract_dir/$(basename "$inner_zip")"
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
-    if unzip -jo "$inner_zip_path" "${boot_part}.img" \
+    if unzip -joq "$inner_zip_path" "${boot_part}.img" \
             -d "$extract_dir" 2>/dev/null; then
         local target_img="$extract_dir/${boot_part}.img"
         if [ -f "$target_img" ] && [ -s "$target_img" ]; then
@@ -822,7 +822,7 @@ _download_factory_boot_image() {
         ux_print "  ⚠  init_boot.img not present in this factory image."
         ux_print "     This firmware may pre-date Android 13 / API 33."
         ux_print "     Falling back to boot.img."
-        if unzip -jo "$inner_zip_path" "boot.img" \
+        if unzip -joq "$inner_zip_path" "boot.img" \
                 -d "$extract_dir" 2>/dev/null; then
             local fallback_img="$extract_dir/boot.img"
             if [ -f "$fallback_img" ] && [ -s "$fallback_img" ]; then
