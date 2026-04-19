@@ -154,7 +154,7 @@ run_share
 echo ""
 echo "  ✓ Block A complete."
 echo "    Bundle: $SHARE_DIR"
-ls -1 "$SHARE_DIR" 2>/dev/null | sed 's/^/      /'
+find "$SHARE_DIR" -mindepth 1 -maxdepth 1 -printf '      %f\n' 2>/dev/null | sort
 
 if [ "$_NO_UPLOAD" = true ]; then
     echo ""
