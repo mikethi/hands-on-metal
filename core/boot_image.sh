@@ -885,6 +885,8 @@ _download_factory_boot_image() {
                 ux_prompt extract_extra \
                     "  Extract additional partition images too (boot/vendor_boot/dtbo/vbmeta/recovery)? [yes/no]" \
                     "no"
+            else
+                log_info "Non-interactive mode: skipping additional partition extraction"
             fi
             if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
                 _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
@@ -913,6 +915,8 @@ _download_factory_boot_image() {
                     ux_prompt extract_extra \
                         "  Extract additional partition images too (boot/vendor_boot/dtbo/vbmeta/recovery)? [yes/no]" \
                         "no"
+                else
+                    log_info "Non-interactive mode: skipping additional partition extraction"
                 fi
                 if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
                     _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
