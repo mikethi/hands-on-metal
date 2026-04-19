@@ -348,13 +348,37 @@ def _try_lz4(data: bytes) -> bytes | None:
     if data[:4] not in (b"\x04\x22\x4d\x18", b"\x02\x21\x4c\x18"):
         return None
     if not _HAS_LZ4:
-        print("  warn: lz4 ramdisk detected but python-lz4 not installed; "
-              "run: pip install lz4", file=sys.stderr)
+        result = _try_lz4_cli(data)
+        if result is not None:
+            return result
+        print("  warn: lz4 ramdisk detected but python-lz4 is not installed and "
+              "lz4 CLI fallback failed; install either `pip install lz4` "
+              "or an `lz4` command-line tool", file=sys.stderr)
         return None
     try:
         return _lz4_frame.decompress(data)
     except Exception:
+        result = _try_lz4_cli(data)
+        if result is not None:
+            return result
         return None
+
+
+def _try_lz4_cli(data: bytes) -> bytes | None:
+    """Try LZ4 decompression via external lz4 CLI using stdin/stdout."""
+    try:
+        result = subprocess.run(
+            ["lz4", "-dc", "-"],
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=_DECOMPRESS_TIMEOUT,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
 
 
 def _try_lzma(data: bytes) -> bytes | None:
