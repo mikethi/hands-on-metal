@@ -590,6 +590,12 @@ log "Updating env registry with collection paths..."
 reg_set path HOM_LIVE_DUMP_DIR "$(real_abs "$OUT")"
 reg_set path HOM_MANIFEST "$(real_abs "$MANIFEST")"
 reg_set path HOM_COLLECT_LOG "$(real_abs "$LOG")"
+if [ "$_HOM_USE_OPTION5_SOURCE" = true ]; then
+    reg_set collect HOM_COLLECT_DATA_SOURCE "option5_images"
+else
+    reg_set collect HOM_COLLECT_DATA_SOURCE "live_filesystem"
+fi
+reg_set collect HOM_COLLECT_OPTION5_IMG_COUNT "$_HOM_OPTION5_IMG_COUNT"
 
 # Record the real absolute paths of the key collected artefacts
 for named in "$OUT/getprop.txt" "$OUT/lshal.txt" "$OUT/dmesg.txt" \
