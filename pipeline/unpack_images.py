@@ -628,7 +628,7 @@ def _path_relative_to(path: Path, base: Path) -> str:
     """Return path as base-relative POSIX string when possible."""
     try:
         return path.resolve().relative_to(base.resolve()).as_posix()
-    except Exception:
+    except ValueError:
         return path.as_posix()
 
 
@@ -762,8 +762,8 @@ def find_images(dump: Path) -> list[Path]:
 
     search_dirs: list[Path] = [dump / "partitions", dump / "boot_images", dump]
 
-    # Option 5 fallback: if dump is ~/hands-on-metal/live_dump, also look in
-    # ~/hands-on-metal/boot_work and ~/hands-on-metal/boot_work/partitions.
+    # Option 20 discovery fallback: if dump is ~/hands-on-metal/live_dump,
+    # also look in option-5 extraction paths under ~/hands-on-metal/boot_work/.
     if dump.name == "live_dump":
         hom_root = dump.parent
         search_dirs.extend([hom_root / "boot_work" / "partitions", hom_root / "boot_work"])

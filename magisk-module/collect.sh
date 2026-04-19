@@ -479,7 +479,7 @@ else
     log "[SKIP ] Boot partition DD requires root"
 fi
 
-# 22. Reuse option-5 extracted images as fallback input
+# Reuse option-5 extracted images as fallback input
 # Option 5 (core/boot_image.sh) stores extracted images under:
 #   ~/hands-on-metal/boot_work/
 #   ~/hands-on-metal/boot_work/partitions/
