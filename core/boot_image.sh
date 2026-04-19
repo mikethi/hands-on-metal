@@ -764,7 +764,6 @@ _extract_all_partitions_from_inner_zip() {
     _has_cmd unzip || return 1
 
     mkdir -p "$part_dir" 2>/dev/null || return 1
-    _reg_set boot HOM_OPTION5_PARTITIONS_DIR "$part_dir"
 
     # Standard boot-chain images shipped in Google factory inner ZIPs.
     # Not every image is present on every device / firmware — missing
@@ -797,12 +796,14 @@ _extract_all_partitions_from_inner_zip() {
     done
 
     if [ "$extracted_count" -gt 0 ]; then
+        _reg_set boot HOM_OPTION5_PARTITIONS_DIR "$part_dir"
         ux_print "  ✓  Extracted $extracted_count partition image(s) to $part_dir"
         ux_print "    ${extracted_names# }"
         return 0
     fi
 
     log_warn "No standard partition images found inside inner ZIP"
+    _reg_set boot HOM_OPTION5_PARTITIONS_DIR ""
     return 1
 }
 
@@ -949,7 +950,7 @@ _download_factory_boot_image() {
                 log_info "Non-interactive mode: skipping additional partition extraction"
             fi
             if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
-                _extract_all_partitions_from_inner_zip "$inner_zip_path" "$BOOT_WORK_DIR/partitions" || true
+                _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
             fi
             _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$target_img"
             echo "$target_img"
@@ -978,7 +979,7 @@ _download_factory_boot_image() {
                     log_info "Non-interactive mode: skipping additional partition extraction"
                 fi
                 if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
-                    _extract_all_partitions_from_inner_zip "$inner_zip_path" "$BOOT_WORK_DIR/partitions" || true
+                    _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
                 fi
                 _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$fallback_img"
                 echo "$fallback_img"
