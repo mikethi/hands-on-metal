@@ -134,6 +134,11 @@ _boot_image_obtainable() {
     return 1
 }
 
+_module_script_readable() {
+    local script="$1"
+    [ -f "$script" ] 2>/dev/null && [ -r "$script" ] 2>/dev/null
+}
+
 # ── Prerequisite checking ─────────────────────────────────────
 check_prereq() {
     local prereq="$1"
@@ -181,6 +186,13 @@ check_prereq() {
             command -v adb >/dev/null 2>&1 \
                 && adb shell "pm list packages 2>/dev/null" 2>/dev/null \
                     | grep -q "com.draco.ladb" 2>/dev/null ;;
+        module_core_stack)
+            local _mod="${HOM_MODULE_DIR:-/data/adb/modules/hands-on-metal-collector}"
+            _module_script_readable "$_mod/core/logging.sh" \
+                && _module_script_readable "$_mod/core/ux.sh" \
+                && _module_script_readable "$_mod/core/state_machine.sh" \
+                && _module_script_readable "$_mod/core/privacy.sh" \
+                && _module_script_readable "$_mod/env_detect.sh" ;;
         cmd:*)
             command -v "${prereq#cmd:}" >/dev/null 2>&1 ;;
         *)
@@ -204,6 +216,7 @@ prereq_label() {
         target_device)    echo "TARGET device connected via USB, OTG, or wireless ADB" ;;
         target_shizuku)   echo "Shizuku running on TARGET (elevated ADB shell access)" ;;
         target_ladb)      echo "LADB installed on TARGET (on-device ADB shell)" ;;
+        module_core_stack) echo "module core scripts present + readable (/data/adb/modules/...)" ;;
         cmd:*)            echo "command: ${prereq#cmd:}" ;;
         *)                echo "$prereq" ;;
     esac
@@ -220,6 +233,7 @@ prereq_provider() {
         target_device)   echo "build/host_flash.sh:wifi-setup" ;;
         target_shizuku)  echo "build/host_flash.sh:elevated-setup" ;;
         target_ladb)     echo "build/host_flash.sh:elevated-setup" ;;
+        module_core_stack) echo "magisk-module installer (module payload extract)" ;;
         *)               echo "" ;;
     esac
 }
@@ -249,9 +263,9 @@ get_prereqs_for_script() {
         core/state_machine.sh)                echo "" ;;
         core/ux.sh)                           echo "" ;;
         magisk-module/collect.sh)             echo "android_device env_registry" ;;
-        magisk-module/customize.sh)           echo "root android_device" ;;
+        magisk-module/customize.sh)           echo "root android_device module_core_stack" ;;
         magisk-module/env_detect.sh)          echo "android_device" ;;
-        magisk-module/service.sh)             echo "root android_device" ;;
+        magisk-module/service.sh)             echo "root android_device module_core_stack" ;;
         magisk-module/setup_termux.sh)        echo "android_device network" ;;
         recovery-zip/collect_recovery.sh)     echo "root android_device" ;;
         pipeline/build_table.py)              echo "cmd:python3 schema" ;;
@@ -406,6 +420,38 @@ refresh_status() {
             MISSING_INFO+=("")
         fi
     done
+}
+
+missing_prereqs_for_script() {
+    local rel="$1"
+    local prereqs prereq missing=""
+    prereqs="$(get_prereqs_for_script "$rel")"
+    [ -n "$prereqs" ] || { echo ""; return 0; }
+    for prereq in $prereqs; do
+        if ! check_prereq "$prereq" 2>/dev/null; then
+            local lbl provider provider_idx
+            lbl="$(prereq_label "$prereq")"
+            provider="$(prereq_provider "$prereq")"
+            provider_idx=""
+            if [ -n "$provider" ]; then
+                local j
+                for j in "${!SCRIPT_LABELS[@]}"; do
+                    if [ "${SCRIPT_LABELS[$j]}" = "$provider" ]; then
+                        provider_idx="$((j + 1))"
+                        break
+                    fi
+                done
+            fi
+            if [ -n "$provider_idx" ]; then
+                missing="${missing:+$missing; }$lbl -> run option $provider_idx ($provider)"
+            elif [ -n "$provider" ]; then
+                missing="${missing:+$missing; }$lbl -> $provider"
+            else
+                missing="${missing:+$missing; }$lbl"
+            fi
+        fi
+    done
+    echo "$missing"
 }
 
 # ── Suggested next step ───────────────────────────────────────
@@ -751,11 +797,17 @@ startup_scan() {
     printf "  %s\n" "$(_repeat_char '─' 68)"
 
     local _known_hom_vars=(
-        HOM_DEV_MODEL           HOM_DEV_CODENAME        HOM_DEV_MANUFACTURER
-        HOM_DEV_API_LEVEL       HOM_DEV_SPL             HOM_DEV_BUILD_ID
-        HOM_DEV_IS_AB           HOM_DEV_SAR             HOM_DEV_DYNAMIC_PARTITIONS
-        HOM_DEV_TREBLE          HOM_DEV_AVB_STATE        HOM_DEV_BOOT_PART
-        HOM_DEV_SERIAL          HOM_DEV_KERNEL_VERSION  HOM_DEV_SOC
+        HOM_DEV_MODEL           HOM_DEV_BRAND            HOM_DEV_DEVICE
+        HOM_DEV_CODENAME        HOM_DEV_FINGERPRINT      HOM_DEV_FIRST_API_LEVEL
+        HOM_DEV_SDK_INT         HOM_DEV_ANDROID_VER      HOM_DEV_SPL
+        HOM_DEV_BUILD_ID        HOM_DEV_IS_AB            HOM_DEV_SLOT_SUFFIX
+        HOM_DEV_CURRENT_SLOT    HOM_DEV_SAR              HOM_DEV_DYNAMIC_PARTITIONS
+        HOM_DEV_TREBLE_ENABLED  HOM_DEV_TREBLE_VINTF_VER HOM_DEV_AVB_VERSION
+        HOM_DEV_AVB_STATE       HOM_DEV_AVB_ALGO         HOM_DEV_BOOT_PART
+        HOM_DEV_BOOT_DEV        HOM_DEV_INIT_BOOT_DEV    HOM_DEV_VENDOR_BOOT_DEV
+        HOM_DEV_SOC_MFR         HOM_DEV_SOC_MODEL        HOM_DEV_PLATFORM
+        HOM_DEV_HARDWARE        HOM_DEV_BOOTLOADER       HOM_DEV_BASEBAND
+        HOM_DEV_SERIAL
         HOM_BOOT_IMG_PATH       HOM_BOOT_IMG_SHA256     HOM_BOOT_PART_SRC
         HOM_BOOT_IMG_METHOD
         HOM_PATCHED_IMG_PATH    HOM_PATCHED_IMG_SHA256
@@ -801,6 +853,39 @@ startup_scan() {
         fi
     done < <(env | sort)
     printf "  %s\n" "$(_repeat_char '─' 68)"
+
+    # ── 2b. Required variable health check ────────────────────
+    echo
+    printf "  %s── Required Variable Health %s%s\n" \
+        "$CLR_CYAN" "$(_repeat_char '─' 39)" "$CLR_RESET"
+    local _required_hom_vars=(
+        HOM_DEV_MODEL HOM_DEV_CODENAME HOM_DEV_SDK_INT
+        HOM_DEV_SPL HOM_DEV_BUILD_ID HOM_DEV_BOOT_PART
+    )
+    local _missing_required=0 _req _req_val
+    for _req in "${_required_hom_vars[@]}"; do
+        _req_val="${!_req:-}"
+        if [ -n "$_req_val" ] && [ "$_req_val" != "MISSING" ]; then
+            printf "  %s✓%s  %-24s = %s\n" \
+                "$CLR_LIGHT_GREEN" "$CLR_RESET" "$_req" "$_req_val"
+        else
+            _missing_required=$(( _missing_required + 1 ))
+            printf "  %s✗%s  %-24s = (missing)  → run core/device_profile.sh\n" \
+                "$CLR_YELLOW" "$CLR_RESET" "$_req"
+        fi
+    done
+    _req_val="${HOM_DEV_SERIAL:-}"
+    if [ -n "$_req_val" ] && [ "$_req_val" != "MISSING" ]; then
+        printf "  %s✓%s  %-24s = %s\n" \
+            "$CLR_LIGHT_GREEN" "$CLR_RESET" "HOM_DEV_SERIAL" "$_req_val"
+    else
+        printf "  %s⚠%s  %-24s = (not set)  → optional/best-effort\n" \
+            "$CLR_YELLOW" "$CLR_RESET" "HOM_DEV_SERIAL"
+    fi
+    if [ "$_missing_required" -gt 0 ]; then
+        printf "  %s→ %d required variable(s) missing; parsing/reporting may be incomplete.%s\n" \
+            "$CLR_YELLOW" "$_missing_required" "$CLR_RESET"
+    fi
 
     # ── 3. Project-relevant variable table ────────────────────
     echo
@@ -1018,7 +1103,8 @@ script_completion_failure() {
         pipeline/build_table.py)
             echo "Database build failed. Verify Python 3 and the schema file are present." ;;
         pipeline/failure_analysis.py)
-            echo "Failure analysis failed. Verify Python 3 is installed." ;;
+            echo "Failure analysis failed."
+            echo "  Verify parsed input exists (default: \$OUT/parsed.json) or pass --parsed manually." ;;
         pipeline/github_notify.py)
             echo "GitHub notification failed. Verify Python 3 is installed."
             [ -n "${GITHUB_TOKEN:-}" ] \
@@ -1026,11 +1112,14 @@ script_completion_failure() {
         pipeline/parse_logs.py)
             echo "Log parsing failed. Verify Python 3 is installed." ;;
         pipeline/parse_manifests.py)
-            echo "Manifest parsing failed. Verify Python 3 and the schema file." ;;
+            echo "Manifest parsing failed."
+            echo "  Verify --db/--dump/--run-id and that dump contains XML/getprop data." ;;
         pipeline/parse_pinctrl.py)
-            echo "Pinctrl parsing failed. Verify Python 3 and the schema file." ;;
+            echo "Pinctrl parsing failed."
+            echo "  Verify --db/--dump/--run-id and that dump has sys/kernel/debug/pinctrl/." ;;
         pipeline/parse_symbols.py)
-            echo "Symbol parsing failed. Verify Python 3 is installed." ;;
+            echo "Symbol parsing failed."
+            echo "  Verify --db/--dump/--run-id and that dump has vendor_symbols/*.nm.txt." ;;
         pipeline/report.py)
             echo "Report generation failed. Verify Python 3 is installed." ;;
         pipeline/unpack_images.py)
@@ -1145,13 +1234,56 @@ run_selected() {
     local kind="${SCRIPT_TYPES[$idx]}"
     local rel="${SCRIPT_LABELS[$idx]}"
     local args_array=()
+    local missing
+    local _out _dump _db _run_id _mode _parsed _analysis _logs
 
     echo
     printf "  Selected: %s%s%s\n" "$CLR_BOLD" "$rel" "$CLR_RESET"
     printf "  %s%s%s\n" "$CLR_DIM" "$(script_description "$rel")" "$CLR_RESET"
     echo
+    missing="$(missing_prereqs_for_script "$rel")"
+    if [ -n "$missing" ] && [ "${HOM_ALLOW_MISSING_PREREQS:-0}" != "1" ]; then
+        printf "  %s✗ BLOCKED%s — unresolved prerequisites:\n" \
+            "$CLR_YELLOW" "$CLR_RESET"
+        printf "     %s\n" "$missing"
+        echo "  Use 'p' to inspect prerequisites."
+        echo "  Override (advanced): set HOM_ALLOW_MISSING_PREREQS=1"
+        return 2
+    fi
     echo "  Note: enter space-separated arguments (embedded quoting not supported)."
     read -r -a args_array -p "  Arguments (optional): "
+
+    if [ "${#args_array[@]}" -eq 0 ] && [ "$kind" = "python" ]; then
+        _out="${OUT:-$HOME/hands-on-metal}"
+        _dump="${HOM_LIVE_DUMP_DIR:-${HOM_LIVE_DUMP:-$_out/live_dump}}"
+        _db="${HOM_DB_PATH:-$_out/hardware_map.sqlite}"
+        _logs="${LOG_DIR:-$_out/logs}"
+        _parsed="${HOM_PARSED_LOG_PATH:-$_out/parsed.json}"
+        _analysis="${HOM_FAILURE_ANALYSIS_PATH:-$_out/failure_analysis.json}"
+        _run_id="${RUN_ID:-1}"
+        _mode="${HOM_BUILD_MODE:-A}"
+        case "$_run_id" in ''|*[!0-9]*) _run_id=1 ;; esac
+        case "$rel" in
+            pipeline/parse_logs.py)
+                args_array=(--log "$_logs" --out "$_parsed")
+                ;;
+            pipeline/parse_manifests.py|pipeline/parse_pinctrl.py|pipeline/parse_symbols.py)
+                args_array=(--db "$_db" --dump "$_dump" --run-id "$_run_id")
+                ;;
+            pipeline/build_table.py)
+                args_array=(--db "$_db" --dump "$_dump" --mode "$_mode")
+                ;;
+            pipeline/report.py)
+                args_array=(--db "$_db" --out "$_out")
+                ;;
+            pipeline/failure_analysis.py)
+                args_array=(--parsed "$_parsed" --index "$REPO_ROOT/build/partition_index.json" --out "$_analysis")
+                ;;
+        esac
+        if [ "${#args_array[@]}" -gt 0 ]; then
+            echo "  Auto-args: ${args_array[*]}"
+        fi
+    fi
 
     echo
     echo "  Running…"
