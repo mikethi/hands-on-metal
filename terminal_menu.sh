@@ -31,6 +31,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── dependency check (runs once per session) ──────────────────
 source "$REPO_ROOT/check_deps.sh" || exit 1
 
+# ── load device environment registry (if available) ──────────
+# device_profile.sh writes HOM_DEV_* variables (build ID, boot
+# partition type, codename, etc.) to this file.  Sourcing it
+# makes that context available for display in the menu.
+_HOM_ENV_REGISTRY="/sdcard/hands-on-metal/env_registry.sh"
+load_env_registry() {
+    if [ -f "$_HOM_ENV_REGISTRY" ]; then
+        # shellcheck disable=SC1090
+        source "$_HOM_ENV_REGISTRY" 2>/dev/null || true
+    fi
+}
+load_env_registry
+
 # ── ANSI color codes ─────────────────────────────────────────
 CLR_LIGHT_GREEN=$'\033[92m'   # ready to run
 CLR_DARK_GREEN=$'\033[32m'    # already done / not needed
@@ -417,6 +430,9 @@ declare -a ITEM_STATUS=()
 declare -a MISSING_INFO=()
 
 refresh_status() {
+    # Re-source the env registry in case device_profile.sh ran mid-session
+    load_env_registry
+
     ITEM_STATUS=()
     MISSING_INFO=()
 
