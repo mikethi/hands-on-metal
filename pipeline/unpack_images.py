@@ -980,16 +980,24 @@ def _is_archive_file(path: Path) -> bool:
 
 
 def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
+    out_resolved = out_dir.resolve()
     try:
         with zipfile.ZipFile(src, "r") as zf:
             members = [m for m in zf.infolist() if not m.is_dir()]
             if not members:
                 return False
             for member in members:
+                mode = (member.external_attr >> 16) & 0xFFFF
+                if (mode & 0o170000) == 0o120000:  # symlink
+                    continue
                 rel = Path(member.filename)
                 if rel.is_absolute() or ".." in rel.parts:
                     continue
                 target = out_dir / rel
+                try:
+                    target.resolve().relative_to(out_resolved)
+                except ValueError:
+                    continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member, "r") as f_in, open(target, "wb") as f_out:
                     while True:
@@ -1003,6 +1011,7 @@ def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
 
 
 def _safe_extract_tar(src: Path, out_dir: Path) -> bool:
+    out_resolved = out_dir.resolve()
     try:
         with tarfile.open(src, "r:*") as tf:
             members = [m for m in tf.getmembers() if m.isfile()]
@@ -1013,6 +1022,10 @@ def _safe_extract_tar(src: Path, out_dir: Path) -> bool:
                 if rel.is_absolute() or ".." in rel.parts:
                     continue
                 target = out_dir / rel
+                try:
+                    target.resolve().relative_to(out_resolved)
+                except ValueError:
+                    continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 f_in = tf.extractfile(member)
                 if f_in is None:
@@ -1066,7 +1079,7 @@ def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
                 continue
             seen_archives.add(akey)
 
-            digest = hashlib.sha256(akey.encode("utf-8", errors="replace")).hexdigest()[:12]
+            digest = hashlib.sha256(akey.encode("utf-8", errors="replace")).hexdigest()[:32]
             out_dir = cache_root / f"{candidate.stem}_{digest}"
             out_dir.mkdir(parents=True, exist_ok=True)
 
