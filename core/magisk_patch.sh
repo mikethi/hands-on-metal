@@ -83,6 +83,21 @@ _dir_writable() {
     return 1
 }
 
+_copy_magisk_asset() {
+    local dest="$1"; shift
+    local dir name
+    for dir in \
+        "$MAGISK_ASSET_DIR1" "$MAGISK_ASSET_DIR2" "$MAGISK_ASSET_DIR3" \
+        "$MAGISK_ASSET_DIR4" "$MAGISK_ASSET_DIR5" "$MAGISK_ASSET_DIR6"; do
+        [ -n "$dir" ] || continue
+        for name in "$@"; do
+            [ -f "$dir/$name" ] || continue
+            cp "$dir/$name" "$dest" 2>/dev/null && return 0
+        done
+    done
+    return 1
+}
+
 # Locate the best available Magisk binary.
 _find_magisk() {
     # 1. PATH
@@ -316,6 +331,75 @@ EOF
     done << EOF
 $stage_dir_candidates
 EOF
+
+    # Fallback for Magisk builds that no longer expose --boot-patch directly.
+    if [ -z "$found_patched" ] || [ ! -f "$found_patched" ]; then
+        local fallback_ws fallback_rc magisk_dir
+        fallback_ws="$magisk_out_dir/magisk_boot_patch_assets_${RUN_ID:-$$}"
+        rm -rf "$fallback_ws" 2>/dev/null || true
+        mkdir -p "$fallback_ws" 2>/dev/null || true
+
+        magisk_dir=$(dirname "$magisk_bin")
+        local src_repo_tools src_mod_tools src_out_tools src_pwd_tools
+        src_repo_tools="${REPO_ROOT:-}/tools"
+        src_mod_tools="${MODPATH:-}/tools"
+        src_out_tools="${OUT:-}/tools"
+        src_pwd_tools="${PWD:-}/tools"
+
+        local MAGISK_ASSET_DIR1 MAGISK_ASSET_DIR2 MAGISK_ASSET_DIR3
+        local MAGISK_ASSET_DIR4 MAGISK_ASSET_DIR5 MAGISK_ASSET_DIR6
+        MAGISK_ASSET_DIR1="$magisk_dir"
+        MAGISK_ASSET_DIR2="$magisk_dir/scripts"
+        MAGISK_ASSET_DIR3="$src_repo_tools"
+        MAGISK_ASSET_DIR4="$src_mod_tools"
+        MAGISK_ASSET_DIR5="$src_out_tools"
+        MAGISK_ASSET_DIR6="$src_pwd_tools"
+
+        cp "$magisk_bin" "$fallback_ws/magisk" 2>/dev/null || true
+        chmod 0755 "$fallback_ws/magisk" 2>/dev/null || true
+
+        _copy_magisk_asset "$fallback_ws/magiskinit" \
+            magiskinit magiskinit64
+        _copy_magisk_asset "$fallback_ws/magiskboot" \
+            magiskboot magiskboot64
+        _copy_magisk_asset "$fallback_ws/init-ld" \
+            init-ld init-ld64 magisk_init_ld64
+        _copy_magisk_asset "$fallback_ws/stub.apk" \
+            stub.apk magisk_stub.apk
+        _copy_magisk_asset "$fallback_ws/boot_patch.sh" \
+            boot_patch.sh magisk_boot_patch.sh
+        _copy_magisk_asset "$fallback_ws/util_functions.sh" \
+            util_functions.sh magisk_util_functions.sh
+        _copy_magisk_asset "$fallback_ws/busybox" \
+            busybox busybox-arm64
+
+        chmod 0755 "$fallback_ws/magiskinit" "$fallback_ws/magiskboot" \
+            "$fallback_ws/init-ld" "$fallback_ws/boot_patch.sh" \
+            "$fallback_ws/util_functions.sh" "$fallback_ws/busybox" \
+            2>/dev/null || true
+
+        if [ -x "$fallback_ws/magisk" ] \
+           && [ -x "$fallback_ws/magiskinit" ] \
+           && [ -x "$fallback_ws/magiskboot" ] \
+           && [ -x "$fallback_ws/init-ld" ] \
+           && [ -f "$fallback_ws/stub.apk" ] \
+           && [ -x "$fallback_ws/boot_patch.sh" ] \
+           && [ -f "$fallback_ws/util_functions.sh" ] \
+           && [ -x "$fallback_ws/busybox" ]; then
+            ux_print "  Direct --boot-patch failed; trying boot_patch.sh fallback..."
+            log_exec "magisk_boot_patch_script" \
+                env TMPDIR="$magisk_out_dir" BOOTMODE=true MAGISKBIN="$fallback_ws" \
+                    "$fallback_ws/boot_patch.sh" "$tmp_input"
+            fallback_rc=$?
+            if [ "$fallback_rc" -eq 0 ] && [ -f "$fallback_ws/new-boot.img" ]; then
+                found_patched="$fallback_ws/new-boot.img"
+                patch_rc=0
+                log_info "Magisk boot_patch.sh fallback produced: $found_patched"
+            fi
+        else
+            log_warn "boot_patch.sh fallback unavailable (required Magisk assets are missing)"
+        fi
+    fi
 
     [ -n "$found_patched" ] && log_info "Magisk patched output found: $found_patched"
 

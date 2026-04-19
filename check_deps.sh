@@ -106,8 +106,13 @@ _hom_fetch_magisk() {
 
     # Already fetched? Nothing to do.
     if [ -f "$tools_dir/magisk64" ] && [ -f "$tools_dir/magisk32" ] \
-            && [ -f "$tools_dir/magiskinit64" ]; then
-        echo "  ✓  Magisk binaries already present in tools/"
+            && [ -f "$tools_dir/magiskinit64" ] \
+            && [ -f "$tools_dir/magiskboot64" ] \
+            && [ -f "$tools_dir/magisk_init_ld64" ] \
+            && [ -f "$tools_dir/magisk_stub.apk" ] \
+            && [ -f "$tools_dir/magisk_boot_patch.sh" ] \
+            && [ -f "$tools_dir/magisk_util_functions.sh" ]; then
+        echo "  ✓  Magisk binaries and patch assets already present in tools/"
         return 0
     fi
 
@@ -158,11 +163,21 @@ _hom_fetch_magisk() {
         'lib/armeabi-v7a/libmagisk32.so' || extract_ok=false
     _hom_extract_magisk "$tools_dir/magiskinit64" \
         'lib/arm64-v8a/libmagiskinit.so' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magiskboot64" \
+        'lib/arm64-v8a/libmagiskboot.so' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magisk_init_ld64" \
+        'lib/arm64-v8a/libinit-ld.so' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magisk_stub.apk" \
+        'assets/stub.apk' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magisk_boot_patch.sh" \
+        'assets/boot_patch.sh' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magisk_util_functions.sh" \
+        'assets/util_functions.sh' || extract_ok=false
 
     unset -f _hom_extract_magisk
 
     if [ "$extract_ok" = true ]; then
-        echo "  ✓  Magisk binaries extracted to tools/ (magisk64, magisk32, magiskinit64)"
+        echo "  ✓  Magisk binaries and patch assets extracted to tools/"
     else
         echo "  ⚠  Magisk APK downloaded but extraction failed (unexpected APK layout)." >&2
     fi

@@ -211,7 +211,10 @@ else
     MAGISK_APK="$_TMP/hands-on-metal-magisk-${MAGISK_VERSION}.apk"
 
     all_magisk_present=true
-    for t in magisk64 magisk32 magiskinit64; do
+    for t in \
+        magisk64 magisk32 magiskinit64 \
+        magiskboot64 magisk_init_ld64 \
+        magisk_stub.apk magisk_boot_patch.sh magisk_util_functions.sh; do
         [ -f "$TOOLS_DIR/$t" ] || { all_magisk_present=false; break; }
     done
 
@@ -241,7 +244,22 @@ else
         extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magiskinit64" \
             'lib/arm64-v8a/libmagiskinit.so'
 
-        ok "magisk64, magisk32, magiskinit64 → $TOOLS_DIR/"
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magiskboot64" \
+            'lib/arm64-v8a/libmagiskboot.so'
+
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magisk_init_ld64" \
+            'lib/arm64-v8a/libinit-ld.so'
+
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magisk_stub.apk" \
+            'assets/stub.apk'
+
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magisk_boot_patch.sh" \
+            'assets/boot_patch.sh'
+
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magisk_util_functions.sh" \
+            'assets/util_functions.sh'
+
+        ok "magisk64, magisk32, magiskinit64, and boot-patch assets → $TOOLS_DIR/"
 
         # Print expected ARM64 hint (file may not be available on all hosts)
         if command -v file >/dev/null 2>&1; then
@@ -285,7 +303,11 @@ ok "Repo snapshot added"
 # b) Overwrite tools/ with the actually-fetched binaries
 rm -rf "$BUNDLE_STAGE/tools"
 mkdir -p "$BUNDLE_STAGE/tools"
-for t in busybox-arm64 magisk64 magisk32 magiskinit64; do
+for t in \
+    busybox-arm64 \
+    magisk64 magisk32 magiskinit64 \
+    magiskboot64 magisk_init_ld64 \
+    magisk_stub.apk magisk_boot_patch.sh magisk_util_functions.sh; do
     if [ -f "$TOOLS_DIR/$t" ]; then
         cp "$TOOLS_DIR/$t" "$BUNDLE_STAGE/tools/$t"
         ok "Bundled tool: $t"
@@ -312,7 +334,11 @@ CHECKSUM_FILE="$BUNDLE_STAGE/dist/checksums-${MODULE_VERSION}.sha256"
 # Also checksum every tool binary included
 (
     cd "$BUNDLE_STAGE/tools"
-    for t in busybox-arm64 magisk64 magisk32 magiskinit64; do
+    for t in \
+        busybox-arm64 \
+        magisk64 magisk32 magiskinit64 \
+        magiskboot64 magisk_init_ld64 \
+        magisk_stub.apk magisk_boot_patch.sh magisk_util_functions.sh; do
         [ -f "$t" ] && $SHA256 "$t"
     done
 ) >> "$CHECKSUM_FILE" 2>/dev/null || true
