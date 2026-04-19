@@ -621,6 +621,26 @@ def detect_dm_verity(data: bytes) -> bool:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Path helpers
+# ════════════════════════════════════════════════════════════════════════════
+
+def _path_relative_to(path: Path, base: Path) -> str:
+    """Return path as base-relative POSIX string when possible."""
+    try:
+        return path.resolve().relative_to(base.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _default_dump_dir() -> Path:
+    """Prefer option-5 extraction root; fall back to live_dump."""
+    hom_root = Path.home() / "hands-on-metal"
+    boot_work = hom_root / "boot_work"
+    live_dump = hom_root / "live_dump"
+    return boot_work if boot_work.exists() else live_dump
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Main image processing pipeline
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -630,7 +650,8 @@ def process_image(img_path: Path, dump: Path, run_id: int,
     Process one boot/vendor_boot image file.
     Returns a dict with status info.
     """
-    result: dict = {"path": str(img_path), "status": "ok",
+    image_rel = _path_relative_to(img_path, dump)
+    result: dict = {"path": image_rel, "status": "ok",
                     "ramdisk_files": [], "enc_detected": False}
 
     raw = img_path.read_bytes()
@@ -648,7 +669,7 @@ def process_image(img_path: Path, dump: Path, run_id: int,
             cur.execute(
                 """INSERT OR IGNORE INTO sysconfig_entry
                    (run_id, source, key, value) VALUES (?,?,?,?)""",
-                (run_id, str(img_path), "encryption.fde_footer", "detected"),
+                (run_id, f"image:{image_rel}", "encryption.fde_footer", "detected"),
             )
         except sqlite3.Error:
             pass
@@ -659,7 +680,7 @@ def process_image(img_path: Path, dump: Path, run_id: int,
             cur.execute(
                 """INSERT OR IGNORE INTO sysconfig_entry
                    (run_id, source, key, value) VALUES (?,?,?,?)""",
-                (run_id, str(img_path), "encryption.dm_verity", "detected"),
+                (run_id, f"image:{image_rel}", "encryption.dm_verity", "detected"),
             )
         except sqlite3.Error:
             pass
@@ -685,8 +706,12 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 
     print(f"    ↳ ramdisk decompressed: {len(cpio_data)} bytes")
 
+    safe_stem = "".join(ch if ch.isalnum() else "_" for ch in img_path.stem)
+    if not safe_stem:
+        safe_stem = "image"
+
     # Extract CPIO
-    out_dir = dump / "ramdisk" / img_path.stem
+    out_dir = dump / "ramdisk" / safe_stem
     out_dir.mkdir(parents=True, exist_ok=True)
     files = extract_cpio(cpio_data, out_dir)
     result["ramdisk_files"] = files
@@ -698,30 +723,30 @@ def process_image(img_path: Path, dump: Path, run_id: int,
             fpath = out_dir / fname.lstrip("/")
             if fpath.exists():
                 text = fpath.read_text(errors="replace")
-                n = parse_fstab(text, f"ramdisk:{img_path.name}/{fname}",
+                n = parse_fstab(text, f"ramdisk:{image_rel}/{fname}",
                                 run_id, cur)
                 if n:
                     print(f"      fstab {fname}: {n} entries")
 
     # Register extracted files in collected_file
     for fname in files:
-        src_path = f"ramdisk:{img_path.name}/{fname}"
-        local_path = str(out_dir / fname.lstrip("/"))
-        p = Path(local_path)
+        src_path = f"ramdisk:{image_rel}/{fname}"
+        local_rel = (Path("ramdisk") / safe_stem / fname.lstrip("/")).as_posix()
+        p = dump / local_rel
         size = p.stat().st_size if p.exists() else None
         try:
             cur.execute(
                 """INSERT OR IGNORE INTO collected_file
                    (run_id, src_path, local_path, size_bytes)
                    VALUES (?,?,?,?)""",
-                (run_id, src_path, local_path, size),
+                (run_id, src_path, local_rel, size),
             )
         except sqlite3.Error:
             pass
 
     # Save DTB if present (for vendor_boot)
     if img.dtb_data:
-        dtb_out = dump / "ramdisk" / img_path.stem / "dtb.img"
+        dtb_out = dump / "ramdisk" / safe_stem / "dtb.img"
         dtb_out.write_bytes(img.dtb_data)
         print(f"    ↳ DTB saved ({len(img.dtb_data)} bytes)")
 
@@ -738,7 +763,35 @@ IMAGE_NAMES = ("boot.img", "vendor_boot.img", "recovery.img",
 
 def find_images(dump: Path) -> list[Path]:
     found: list[Path] = []
-    for search_dir in (dump / "partitions", dump / "boot_images", dump):
+
+    search_dirs: list[Path] = [dump / "partitions", dump / "boot_images", dump]
+
+    # Option 20 discovery fallback: also check option-5 extraction paths
+    # under a sibling boot_work directory when available.
+    sibling_boot_work = dump.parent / "boot_work"
+    if sibling_boot_work != dump:
+        search_dirs.extend([sibling_boot_work / "partitions", sibling_boot_work])
+
+    # Optional explicit boot_work override for custom layouts.
+    boot_work_env = os.environ.get("HOM_BOOT_WORK_DIR")
+    if boot_work_env:
+        boot_work = Path(boot_work_env)
+        search_dirs.extend([boot_work / "partitions", boot_work])
+
+    # De-duplicate while preserving order.
+    uniq_dirs: list[Path] = []
+    seen_dirs: set[str] = set()
+    for d in search_dirs:
+        try:
+            key = str(d.resolve())
+        except OSError:
+            key = str(d)
+        if key in seen_dirs:
+            continue
+        seen_dirs.add(key)
+        uniq_dirs.append(d)
+
+    for search_dir in uniq_dirs:
         if not search_dir.exists():
             continue
         for name in IMAGE_NAMES:
@@ -760,9 +813,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="Unpack Android boot/ramdisk images into the hardware_map database"
     )
-    ap.add_argument("--db",     required=True, help="Path to hardware_map.sqlite")
-    ap.add_argument("--dump",   required=True, help="Root of the collection dump directory")
-    ap.add_argument("--run-id", required=True, type=int, dest="run_id")
+    ap.add_argument("--db",     default="hardware_map.sqlite",
+                    help="Path to hardware_map.sqlite (default: ./hardware_map.sqlite)")
+    ap.add_argument("--dump",   default=str(_default_dump_dir()),
+                    help="Root of the collection dump directory "
+                         "(default: ~/hands-on-metal/boot_work if present, else ~/hands-on-metal/live_dump)")
+    ap.add_argument("--run-id", default=1, type=int, dest="run_id",
+                    help="Run ID for DB rows (default: 1)")
     ap.add_argument("--image",  default=None,
                     help="Explicit path to a single image file (skips auto-discovery)")
     args = ap.parse_args()
@@ -784,7 +841,9 @@ def main() -> None:
 
     if not images:
         print("No boot images found.  Place boot.img / vendor_boot.img in "
-              f"{dump}/partitions/ or {dump}/boot_images/", file=sys.stderr)
+              f"{dump}/partitions/ or {dump}/boot_images/. "
+              "Preferred: run option 5 first; fallback paths are checked automatically.",
+              file=sys.stderr)
         sys.exit(0)
 
     print(f"Processing {len(images)} image(s)...")
