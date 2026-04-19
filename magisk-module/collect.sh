@@ -96,6 +96,12 @@ copy_virtual_dir() {
     done
 }
 
+count_img_files() {
+    local dir="$1"
+    [ -d "$dir" ] || { echo 0; return 0; }
+    find "$dir" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' '
+}
+
 # ── main ─────────────────────────────────────────────────────
 
 mkdir -p "$OUT"
@@ -138,9 +144,9 @@ _HOM_OPTION5_IMG_COUNT=0
 _HOM_HAS_BOOT_WORK=false
 if [ -d "$BOOT_WORK_ROOT" ]; then
     _HOM_HAS_BOOT_WORK=true
-    _HOM_OPTION5_IMG_COUNT=$(find "$BOOT_WORK_ROOT" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' ')
+    _HOM_OPTION5_IMG_COUNT=$(count_img_files "$BOOT_WORK_ROOT")
     if [ -d "$BOOT_WORK_ROOT/partitions" ]; then
-        _HOM_PARTITIONS_IMG_COUNT=$(find "$BOOT_WORK_ROOT/partitions" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' ')
+        _HOM_PARTITIONS_IMG_COUNT=$(count_img_files "$BOOT_WORK_ROOT/partitions")
         _HOM_OPTION5_IMG_COUNT=$((_HOM_OPTION5_IMG_COUNT + _HOM_PARTITIONS_IMG_COUNT))
     fi
 fi
@@ -346,7 +352,8 @@ if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
 
     # 12. Compatibility matrices
     # compatibility_matrix*.xml files are included by the VINTF directory
-    # copies above (/vendor/etc/vintf, /system/etc/vintf, /odm/etc/vintf).
+    # copies done in section 9 above
+    # (/vendor/etc/vintf, /system/etc/vintf, /odm/etc/vintf).
     # Some devices also place top-level compatibility_matrix.xml in /vendor/etc
     # or /system/etc, so copy those explicitly as well.
     copy_file /vendor/etc/compatibility_matrix.xml
