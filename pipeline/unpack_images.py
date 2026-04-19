@@ -839,7 +839,9 @@ def main() -> None:
 
     if not images:
         print("No boot images found.  Place boot.img / vendor_boot.img in "
-              f"{dump}/partitions/ or {dump}/boot_images/", file=sys.stderr)
+              f"{dump}/partitions/ or {dump}/boot_images/. "
+              "Preferred: run option 5 first; fallback paths are checked automatically.",
+              file=sys.stderr)
         sys.exit(0)
 
     print(f"Processing {len(images)} image(s)...")

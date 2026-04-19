@@ -1067,6 +1067,8 @@ script_completion_failure() {
             ;;
         pipeline/unpack_images.py)
             echo "Image unpacking failed. Verify Python 3 is installed."
+            echo "  Preferred: run option 5 (core/boot_image.sh) first."
+            echo "  Fallback paths are still checked automatically."
             ;;
         pipeline/upload.py)
             echo "Upload failed. Verify Python 3 is installed."
@@ -1193,6 +1195,8 @@ script_next_steps() {
             ;;
         pipeline/unpack_images.py)
             echo "  → Images unpacked. Proceed with parsing or analysis of the extracted contents."
+            echo "  → Preferred: run option 5 first to populate boot_work paths."
+            echo "  → Otherwise fallback image paths are used automatically."
             ;;
         pipeline/upload.py)
             if [ -n "${GITHUB_TOKEN:-}" ]; then
