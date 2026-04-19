@@ -343,8 +343,6 @@ if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
 
     # 12. Compatibility matrices
     log "Collecting compatibility matrices..."
-    copy_dir /vendor/etc/vintf
-    copy_dir /system/etc/vintf
     copy_file /vendor/etc/compatibility_matrix.xml
     copy_file /system/etc/compatibility_matrix.xml
 
