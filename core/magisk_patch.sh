@@ -67,6 +67,25 @@ _sha256() {
     fi
 }
 
+_dir_writable() {
+    local dir="$1"
+    local probe="$dir/.hom_write_probe_$$"
+    [ -n "$dir" ] || return 1
+    mkdir -p "$dir" 2>/dev/null || true
+    [ -d "$dir" ] || return 1
+    : > "$probe" 2>/dev/null || return 1
+    rm -f "$probe" 2>/dev/null || true
+    return 0
+}
+
+_pick_writable_dir() {
+    local dir
+    for dir in "$@"; do
+        _dir_writable "$dir" && { echo "$dir"; return 0; }
+    done
+    return 1
+}
+
 # Locate the best available Magisk binary.
 _find_magisk() {
     # 1. PATH
@@ -250,13 +269,20 @@ passing AVB verification through the correct flags"
 
     ux_print "  Running Magisk patch (this may take 30–60 seconds)..."
 
-    local magisk_out_dir="/data/local/tmp"
-    mkdir -p "$magisk_out_dir" 2>/dev/null || true
+    local magisk_out_dir
+    magisk_out_dir=$(_pick_writable_dir \
+        "/data/local/tmp" \
+        "${TMPDIR:-}" \
+        "$BOOT_WORK_DIR" \
+        "${HOME:-}/tmp" \
+        "${PWD:-.}") || \
+        ux_abort "No writable staging directory available for Magisk patching."
+    ux_print "  Magisk staging dir: $magisk_out_dir"
 
-    # Copy input to /data/local/tmp where Magisk can access it
-    local tmp_input="$magisk_out_dir/hom_${boot_part}_in.img"
+    # Copy input to a writable staging directory where Magisk can access it
+    local tmp_input="$magisk_out_dir/hom_${boot_part}_in_${RUN_ID:-$$}.img"
     cp "$boot_img" "$tmp_input" 2>/dev/null || \
-        ux_abort "Could not copy boot image to $magisk_out_dir"
+        ux_abort "Could not copy boot image to staging dir: $magisk_out_dir"
 
     # Run the patch
     log_exec "magisk_boot_patch" \
@@ -264,9 +290,13 @@ passing AVB verification through the correct flags"
     local patch_rc=$?
 
     # Locate the patched output
-    local found_patched=""
-    for f in "$magisk_out_dir"/magisk_patched_*.img; do
-        [ -f "$f" ] && { found_patched="$f"; break; }
+    local found_patched="" f search_dir
+    for search_dir in "$magisk_out_dir" "/data/local/tmp" "$BOOT_WORK_DIR" "${TMPDIR:-}" "${PWD:-.}"; do
+        [ -n "$search_dir" ] || continue
+        for f in "$search_dir"/magisk_patched_*.img; do
+            [ -f "$f" ] && { found_patched="$f"; break; }
+        done
+        [ -n "$found_patched" ] && break
     done
 
     if [ -z "$found_patched" ] || [ ! -f "$found_patched" ]; then
