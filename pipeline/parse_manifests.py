@@ -286,8 +286,8 @@ def main() -> None:
 
     # 1. Getprop
     gp_path = dump / "getprop.txt"
-    n = parse_getprop(gp_path, args.run_id, cur)
-    print(f"getprop: {n} properties inserted")
+    getprop_total = parse_getprop(gp_path, args.run_id, cur)
+    print(f"getprop: {getprop_total} properties inserted")
 
     # 2. Board summary
     parse_board_summary(dump / "board_summary.txt", args.run_id, cur, db)
@@ -326,6 +326,20 @@ def main() -> None:
             n = parse_sysconfig_xml(xml_path, args.run_id, cur)
             sc_total += n
     print(f"Sysconfig/permissions: {sc_total} entries")
+
+    if getprop_total == 0 and vintf_total == 0 and sc_total == 0:
+        print(
+            "error: parser found no getprop/manifests/sysconfig data "
+            f"under dump path: {dump}",
+            file=sys.stderr,
+        )
+        print(
+            "hint: run collection first and pass --dump to the directory that "
+            "contains getprop.txt and vendor/system XML trees",
+            file=sys.stderr,
+        )
+        db.close()
+        sys.exit(1)
 
     db.commit()
     db.close()
