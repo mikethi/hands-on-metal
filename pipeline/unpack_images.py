@@ -621,6 +621,26 @@ def detect_dm_verity(data: bytes) -> bool:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Path helpers
+# ════════════════════════════════════════════════════════════════════════════
+
+def _path_relative_to(path: Path, base: Path) -> str:
+    """Return path as base-relative POSIX string when possible."""
+    try:
+        return path.resolve().relative_to(base.resolve()).as_posix()
+    except Exception:
+        return path.as_posix()
+
+
+def _default_dump_dir() -> Path:
+    """Prefer option-5 extraction root; fall back to live_dump."""
+    hom_root = Path.home() / "hands-on-metal"
+    boot_work = hom_root / "boot_work"
+    live_dump = hom_root / "live_dump"
+    return boot_work if boot_work.exists() else live_dump
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Main image processing pipeline
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -630,7 +650,8 @@ def process_image(img_path: Path, dump: Path, run_id: int,
     Process one boot/vendor_boot image file.
     Returns a dict with status info.
     """
-    result: dict = {"path": str(img_path), "status": "ok",
+    image_rel = _path_relative_to(img_path, dump)
+    result: dict = {"path": image_rel, "status": "ok",
                     "ramdisk_files": [], "enc_detected": False}
 
     raw = img_path.read_bytes()
@@ -648,7 +669,7 @@ def process_image(img_path: Path, dump: Path, run_id: int,
             cur.execute(
                 """INSERT OR IGNORE INTO sysconfig_entry
                    (run_id, source, key, value) VALUES (?,?,?,?)""",
-                (run_id, str(img_path), "encryption.fde_footer", "detected"),
+                (run_id, f"image:{image_rel}", "encryption.fde_footer", "detected"),
             )
         except sqlite3.Error:
             pass
@@ -659,7 +680,7 @@ def process_image(img_path: Path, dump: Path, run_id: int,
             cur.execute(
                 """INSERT OR IGNORE INTO sysconfig_entry
                    (run_id, source, key, value) VALUES (?,?,?,?)""",
-                (run_id, str(img_path), "encryption.dm_verity", "detected"),
+                (run_id, f"image:{image_rel}", "encryption.dm_verity", "detected"),
             )
         except sqlite3.Error:
             pass
@@ -698,23 +719,23 @@ def process_image(img_path: Path, dump: Path, run_id: int,
             fpath = out_dir / fname.lstrip("/")
             if fpath.exists():
                 text = fpath.read_text(errors="replace")
-                n = parse_fstab(text, f"ramdisk:{img_path.name}/{fname}",
+                n = parse_fstab(text, f"ramdisk:{image_rel}/{fname}",
                                 run_id, cur)
                 if n:
                     print(f"      fstab {fname}: {n} entries")
 
     # Register extracted files in collected_file
     for fname in files:
-        src_path = f"ramdisk:{img_path.name}/{fname}"
-        local_path = str(out_dir / fname.lstrip("/"))
-        p = Path(local_path)
+        src_path = f"ramdisk:{image_rel}/{fname}"
+        local_rel = (Path("ramdisk") / img_path.stem / fname.lstrip("/")).as_posix()
+        p = dump / local_rel
         size = p.stat().st_size if p.exists() else None
         try:
             cur.execute(
                 """INSERT OR IGNORE INTO collected_file
                    (run_id, src_path, local_path, size_bytes)
                    VALUES (?,?,?,?)""",
-                (run_id, src_path, local_path, size),
+                (run_id, src_path, local_rel, size),
             )
         except sqlite3.Error:
             pass
@@ -787,8 +808,9 @@ def main() -> None:
     )
     ap.add_argument("--db",     default="hardware_map.sqlite",
                     help="Path to hardware_map.sqlite (default: ./hardware_map.sqlite)")
-    ap.add_argument("--dump",   default=os.path.expanduser("~/hands-on-metal/live_dump"),
-                    help="Root of the collection dump directory (default: ~/hands-on-metal/live_dump)")
+    ap.add_argument("--dump",   default=str(_default_dump_dir()),
+                    help="Root of the collection dump directory "
+                         "(default: ~/hands-on-metal/boot_work if present, else ~/hands-on-metal/live_dump)")
     ap.add_argument("--run-id", default=1, type=int, dest="run_id",
                     help="Run ID for DB rows (default: 1)")
     ap.add_argument("--image",  default=None,
