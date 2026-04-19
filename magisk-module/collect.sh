@@ -27,6 +27,7 @@ OUT="${HOME:-/data/local/tmp}/hands-on-metal/live_dump"
 LOG=$OUT/collect.log
 MANIFEST=$OUT/manifest.txt
 ENV_REGISTRY="${HOME:-/data/local/tmp}/hands-on-metal/env_registry.sh"
+BOOT_WORK_ROOT="${HOME:-/data/local/tmp}/hands-on-metal/boot_work"
 
 # ── helpers ──────────────────────────────────────────────────
 
@@ -128,6 +129,25 @@ if [ "$_HOM_IS_ROOT" = false ]; then
     log "[INFO ] Running WITHOUT root — some data sources will be skipped"
     log "[INFO ] Root-only: dmesg, /sys/kernel/debug/pinctrl, block device DD,"
     log "[INFO ]            vendor library symbols, readelf sections"
+fi
+
+# Prefer option-5 extracted images/vars as a data source when running without
+# root. If option-5 output is absent (or execution is root), keep the existing
+# live-filesystem behavior.
+_HOM_OPTION5_IMG_COUNT=0
+if [ -d "$BOOT_WORK_ROOT" ]; then
+    for _img in "$BOOT_WORK_ROOT"/*.img "$BOOT_WORK_ROOT"/partitions/*.img; do
+        [ -f "$_img" ] || continue
+        _HOM_OPTION5_IMG_COUNT=$((_HOM_OPTION5_IMG_COUNT + 1))
+    done
+fi
+_HOM_USE_OPTION5_SOURCE=false
+if [ "$_HOM_IS_ROOT" = false ] && [ "$_HOM_OPTION5_IMG_COUNT" -gt 0 ]; then
+    _HOM_USE_OPTION5_SOURCE=true
+    log "[INFO ] Using option-5 extracted images as primary data source (count=$_HOM_OPTION5_IMG_COUNT)."
+    log "[INFO ] Live /vendor,/odm,/system filesystem scans are skipped in non-root mode."
+else
+    log "[INFO ] Using live filesystem as primary data source."
 fi
 log "Device: $(getprop ro.product.model)"
 
@@ -298,52 +318,56 @@ _check_hw_data_sanity() {
 _check_hw_data_sanity
 
 # 9. VINTF manifests
-log "Collecting VINTF manifests..."
-for f in /vendor/etc/manifest.xml \
-          /system/etc/vintf/manifest.xml \
-          /odm/etc/manifest.xml; do
-    copy_file "$f"
-done
-copy_dir /vendor/etc/vintf
-copy_dir /system/etc/vintf
-copy_dir /odm/etc/vintf
+if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
+    log "Collecting VINTF manifests..."
+    for f in /vendor/etc/manifest.xml \
+              /system/etc/vintf/manifest.xml \
+              /odm/etc/manifest.xml; do
+        copy_file "$f"
+    done
+    copy_dir /vendor/etc/vintf
+    copy_dir /system/etc/vintf
+    copy_dir /odm/etc/vintf
 
-# 10. Sysconfig XMLs
-log "Collecting sysconfig..."
-copy_dir /vendor/etc/sysconfig
-copy_dir /system/etc/sysconfig
-copy_dir /odm/etc/sysconfig
+    # 10. Sysconfig XMLs
+    log "Collecting sysconfig..."
+    copy_dir /vendor/etc/sysconfig
+    copy_dir /system/etc/sysconfig
+    copy_dir /odm/etc/sysconfig
 
-# 11. Protobuf files (can contain hardware configuration)
-log "Collecting .pb files..."
-find /vendor /odm -name "*.pb" 2>/dev/null | while IFS= read -r f; do
-    copy_file "$f"
-done
+    # 11. Protobuf files (can contain hardware configuration)
+    log "Collecting .pb files..."
+    find /vendor /odm -name "*.pb" 2>/dev/null | while IFS= read -r f; do
+        copy_file "$f"
+    done
 
-# 12. Compatibility matrices
-log "Collecting compatibility matrices..."
-copy_dir /vendor/etc/vintf
-copy_dir /system/etc/vintf
-copy_file /vendor/etc/compatibility_matrix.xml
-copy_file /system/etc/compatibility_matrix.xml
+    # 12. Compatibility matrices
+    log "Collecting compatibility matrices..."
+    copy_dir /vendor/etc/vintf
+    copy_dir /system/etc/vintf
+    copy_file /vendor/etc/compatibility_matrix.xml
+    copy_file /system/etc/compatibility_matrix.xml
 
-# 13. HAL / permissions XMLs
-log "Collecting HAL permission XMLs..."
-copy_dir /vendor/etc/permissions
-copy_dir /system/etc/permissions
-copy_dir /odm/etc/permissions
+    # 13. HAL / permissions XMLs
+    log "Collecting HAL permission XMLs..."
+    copy_dir /vendor/etc/permissions
+    copy_dir /system/etc/permissions
+    copy_dir /odm/etc/permissions
 
-# 14. Vendor init RC files (contain service definitions, HAL paths)
-log "Collecting RC files..."
-find /vendor/etc/init /odm/etc/init /system/etc/init \
-     -name "*.rc" 2>/dev/null | while IFS= read -r f; do
-    copy_file "$f"
-done
+    # 14. Vendor init RC files (contain service definitions, HAL paths)
+    log "Collecting RC files..."
+    find /vendor/etc/init /odm/etc/init /system/etc/init \
+         -name "*.rc" 2>/dev/null | while IFS= read -r f; do
+        copy_file "$f"
+    done
 
-# 15. SELinux policies (device-specific rules reveal hardware names)
-log "Collecting SELinux policies..."
-copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
-copy_dir /vendor/etc/selinux
+    # 15. SELinux policies (device-specific rules reveal hardware names)
+    log "Collecting SELinux policies..."
+    copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
+    copy_dir /vendor/etc/selinux
+else
+    log "[SKIP ] Live VINTF/sysconfig/permissions/SELinux filesystem scans (using option-5 source)"
+fi
 
 # 16. Symbol lists from vendor libraries (text nm output, usually requires root)
 if [ "$_HOM_IS_ROOT" = true ]; then
@@ -436,11 +460,15 @@ copy_virtual_dir /sys/module/dm_crypt
 copy_virtual_dir /sys/module/dm_verity
 
 # fstab files from all locations (contain fileencryption= / encryptable= flags)
-log "Collecting fstab files..."
-find /vendor /odm /system /first_stage_ramdisk \
-     -name "fstab*" 2>/dev/null | while IFS= read -r f; do
-    copy_file "$f"
-done
+if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
+    log "Collecting fstab files..."
+    find /vendor /odm /system /first_stage_ramdisk \
+         -name "fstab*" 2>/dev/null | while IFS= read -r f; do
+        copy_file "$f"
+    done
+else
+    log "[SKIP ] Live fstab filesystem scan (using option-5 source)"
+fi
 
 # 21. Live ramdisk extraction from the running boot partition (requires root)
 if [ "$_HOM_IS_ROOT" = true ]; then
@@ -485,7 +513,6 @@ fi
 #   ~/hands-on-metal/boot_work/partitions/
 # Pull them into this dump so option 20 (unpack_images.py) can use both
 # the boot image and any additional extracted partition images.
-BOOT_WORK_ROOT="${HOME:-/data/local/tmp}/hands-on-metal/boot_work"
 if [ -d "$BOOT_WORK_ROOT" ]; then
     log "Importing pre-extracted option-5 images from $BOOT_WORK_ROOT..."
     mkdir -p "$OUT/boot_images" "$OUT/partitions"
