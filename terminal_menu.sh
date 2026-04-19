@@ -1302,6 +1302,9 @@ main() {
         exit 1
     fi
 
+    # Run the startup scan once to gather all available information
+    startup_scan
+
     while true; do
         print_menu
         read -r -p "Choose an option: " choice
