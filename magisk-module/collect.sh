@@ -344,20 +344,24 @@ if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
         copy_file "$f"
     done
 
-    # 12. HAL / permissions XMLs
+    # 12. Compatibility matrices
+    # compatibility_matrix*.xml files are included by the VINTF directory
+    # copies above (/vendor/etc/vintf, /system/etc/vintf, /odm/etc/vintf).
+
+    # 13. HAL / permissions XMLs
     log "Collecting HAL permission XMLs..."
     copy_dir /vendor/etc/permissions
     copy_dir /system/etc/permissions
     copy_dir /odm/etc/permissions
 
-    # 13. Vendor init RC files (contain service definitions, HAL paths)
+    # 14. Vendor init RC files (contain service definitions, HAL paths)
     log "Collecting RC files..."
     find /vendor/etc/init /odm/etc/init /system/etc/init \
          -name "*.rc" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
     done
 
-    # 14. SELinux policies (device-specific rules reveal hardware names)
+    # 15. SELinux policies (device-specific rules reveal hardware names)
     log "Collecting SELinux policies..."
     copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
     copy_dir /vendor/etc/selinux
