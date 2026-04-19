@@ -994,6 +994,8 @@ def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
                 return False
             for member in members:
                 mode = (member.external_attr >> 16) & 0xFFFF
+                # ZIP external_attr stores Unix mode bits in the upper 16 bits.
+                # 0o170000 masks file type and 0o120000 identifies symlinks.
                 if (mode & 0o170000) == 0o120000:  # symlink
                     continue
                 rel = Path(member.filename)
@@ -1034,6 +1036,7 @@ def _safe_extract_tar(src: Path, out_dir: Path) -> bool:
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 f_in = tf.extractfile(member)
+                # Defensive guard for malformed archives despite m.isfile().
                 if f_in is None:
                     continue
                 with f_in, open(target, "wb") as f_out:
@@ -1085,7 +1088,12 @@ def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
                 continue
             seen_archives.add(akey)
 
-            digest = hashlib.sha256(akey.encode("utf-8", errors="replace")).hexdigest()
+            try:
+                st = candidate.stat()
+                digest_src = f"{akey}:{st.st_size}:{st.st_mtime_ns}"
+            except OSError:
+                digest_src = akey
+            digest = hashlib.sha256(digest_src.encode("utf-8", errors="replace")).hexdigest()[:24]
             out_dir = cache_root / f"{candidate.stem}_{digest}"
             out_dir.mkdir(parents=True, exist_ok=True)
 
