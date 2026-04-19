@@ -20,7 +20,7 @@ Steps:
 Usage:
   python pipeline/build_table.py \\
       --db hardware_map.sqlite \\
-      --dump /path/to/live_dump \\
+      --dump /path/to/boot_work \\
       --mode A              # A | B | C
 
 After this completes, run:
