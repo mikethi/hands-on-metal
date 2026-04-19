@@ -1032,7 +1032,7 @@ run_boot_image_acquire() {
             log_info "Pre-placed/backup image found: $pre_placed"
 
             if [ -t 0 ] 2>/dev/null; then
-                if ! _confirm_yn "Use this detected image: $pre_placed ?"; then
+                if ! _confirm_yn "Use this detected image: $pre_placed?"; then
                     log_info "User declined detected pre-placed image $pre_placed"
                     pre_placed=""
                 fi
