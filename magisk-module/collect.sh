@@ -341,25 +341,20 @@ if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
         copy_file "$f"
     done
 
-    # 12. Compatibility matrices
-    log "Collecting compatibility matrices..."
-    copy_file /vendor/etc/compatibility_matrix.xml
-    copy_file /system/etc/compatibility_matrix.xml
-
-    # 13. HAL / permissions XMLs
+    # 12. HAL / permissions XMLs
     log "Collecting HAL permission XMLs..."
     copy_dir /vendor/etc/permissions
     copy_dir /system/etc/permissions
     copy_dir /odm/etc/permissions
 
-    # 14. Vendor init RC files (contain service definitions, HAL paths)
+    # 13. Vendor init RC files (contain service definitions, HAL paths)
     log "Collecting RC files..."
     find /vendor/etc/init /odm/etc/init /system/etc/init \
          -name "*.rc" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
     done
 
-    # 15. SELinux policies (device-specific rules reveal hardware names)
+    # 14. SELinux policies (device-specific rules reveal hardware names)
     log "Collecting SELinux policies..."
     copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
     copy_dir /vendor/etc/selinux
