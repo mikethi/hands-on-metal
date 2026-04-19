@@ -758,6 +758,8 @@ _is_google_device_supported() {
 #
 # Usage: _extract_all_partitions_from_inner_zip <inner_zip_path>
 _extract_all_partitions_from_inner_zip() {
+    # $1 = path to inner image-*.zip
+    # $2 = optional output directory for extracted partition images
     local inner_zip_path="$1"
     local part_dir="${2:-$BOOT_WORK_DIR/partitions}"
     [ -f "$inner_zip_path" ] || return 1
@@ -934,6 +936,7 @@ _download_factory_boot_image() {
     _reg_set boot HOM_OPTION5_INNER_ZIP_PATH "$inner_zip_path"
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
+    local partitions_dir="$BOOT_WORK_DIR/partitions"
     if unzip -joq "$inner_zip_path" "${boot_part}.img" \
             -d "$extract_dir" 2>/dev/null; then
         local target_img="$extract_dir/${boot_part}.img"
@@ -950,7 +953,7 @@ _download_factory_boot_image() {
                 log_info "Non-interactive mode: skipping additional partition extraction"
             fi
             if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
-                _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+                _extract_all_partitions_from_inner_zip "$inner_zip_path" "$partitions_dir" || true
             fi
             _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$target_img"
             echo "$target_img"
@@ -979,7 +982,7 @@ _download_factory_boot_image() {
                     log_info "Non-interactive mode: skipping additional partition extraction"
                 fi
                 if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
-                    _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+                    _extract_all_partitions_from_inner_zip "$inner_zip_path" "$partitions_dir" || true
                 fi
                 _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$fallback_img"
                 echo "$fallback_img"
