@@ -1039,7 +1039,7 @@ def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
     for root in roots:
         if not root.exists():
             continue
-        key = str(root.resolve()) if root.exists() else str(root)
+        key = str(root.resolve())
         if key in seen_roots:
             continue
         seen_roots.add(key)
@@ -1189,8 +1189,7 @@ def find_images(dump: Path) -> list[Path]:
             continue
         for name in IMAGE_NAMES:
             for c in sorted(search_dir.rglob(name)):
-                if c.exists():
-                    _add(c)
+                _add(c)
         # Also recursively discover *.img candidates.
         for img in sorted(search_dir.rglob("*.img")):
             if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
