@@ -33,6 +33,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS_DIR="$REPO_ROOT/tools"
 DIST_DIR="$REPO_ROOT/dist"
 BUILD_DIR="$REPO_ROOT/build"
+HOM_TMPDIR="${TMPDIR:-/tmp}"
 
 # ── defaults ──────────────────────────────────────────────────
 MAGISK_VERSION="v30.7"
@@ -93,9 +94,18 @@ require_cmd() {
 
 download() {
     local url="$1" dest="$2"
+    local dest_dir
+    dest_dir="$(dirname "$dest")"
+    if [ ! -d "$dest_dir" ]; then
+        mkdir -p "$dest_dir" || { fail "Cannot create directory: $dest_dir"; exit 1; }
+    fi
     echo "  Downloading: $url"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --retry 3 --retry-delay 2 -o "$dest" "$url"
+        if ! curl -fsSL --retry 3 --retry-delay 2 -o "$dest" "$url"; then
+            fail "Download failed: $url"
+            fail "Check network connectivity and that the URL is reachable."
+            exit 1
+        fi
     else
         fail "curl is required for downloads."
         exit 1
