@@ -189,6 +189,39 @@ _has_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Return 0 if $1 appears as a whole line in the newline-separated list $2.
+_in_list() {
+    printf '%s\n' "$2" | grep -qxF "$1" 2>/dev/null
+}
+
+# Heuristic: try to extract a build ID string from a raw boot/init_boot image.
+# Scans the binary for common Android build property patterns embedded in the
+# image (works best on LZ4-legacy or uncompressed ramdisks; may return empty
+# for GZip-compressed ramdisks).
+# Echoes the build ID (e.g. "CP1A.260305.018"), or empty if not detectable.
+_extract_build_id_from_image() {
+    local file="$1" result=""
+    [ -f "$file" ] || { echo ""; return 0; }
+
+    # 1. ro.build.id=VALUE (prop.default / default.prop in the ramdisk)
+    result=$(grep -a -m1 -o 'ro\.build\.id=[^[:space:][:cntrl:]/]*' \
+        "$file" 2>/dev/null | head -1 | sed 's/ro\.build\.id=//' || true)
+    [ -n "$result" ] && { echo "$result"; return 0; }
+
+    # 2. ro.build.fingerprint=brand/product/device:ver/BUILD_ID/incr:type/keys
+    #    The build ID is field 4 when split on '/'.
+    result=$(grep -a -m1 -o 'ro\.build\.fingerprint=[^[:space:][:cntrl:]]*' \
+        "$file" 2>/dev/null | head -1 | cut -d/ -f4 || true)
+    [ -n "$result" ] && { echo "$result"; return 0; }
+
+    # 3. Kernel command line: androidboot.buildid=VALUE
+    result=$(grep -a -m1 -o 'androidboot\.buildid=[^[:space:]]*' \
+        "$file" 2>/dev/null | head -1 | sed 's/androidboot\.buildid=//' || true)
+    [ -n "$result" ] && { echo "$result"; return 0; }
+
+    echo ""
+}
+
 # ── dependency self-check ─────────────────────────────────────
 # Validates that the tools THIS script needs are present.
 # Logs missing optional tools so acquisition paths that depend
@@ -241,7 +274,10 @@ _boot_image_check_deps() {
 # Decompression is handled by the caller in run_boot_image_acquire.
 
 _find_pre_placed_image() {
+    # $1 = boot partition name (boot / init_boot)
+    # $2 = (optional) newline-separated list of paths already seen/declined — skipped
     local boot_part="$1"
+    local excluded="${2:-}"
     local candidate
 
     # ── Direct image files in standard locations ──────────────
@@ -253,6 +289,7 @@ _find_pre_placed_image() {
         "/sdcard/${boot_part}.img" \
         "/data/local/tmp/${boot_part}.img"; do
         if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+            _in_list "$candidate" "$excluded" && continue
             echo "$candidate"
             return 0
         fi
@@ -267,6 +304,7 @@ _find_pre_placed_image() {
         "/data/adb/magisk/stock_boot.img" \
         "/data/adb/magisk/stock_boot_${boot_part}.img"; do
         if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+            _in_list "$candidate" "$excluded" && continue
             log_info "Found Magisk stock boot backup: $candidate"
             echo "$candidate"
             return 0
@@ -294,6 +332,7 @@ _find_pre_placed_image() {
         # Uncompressed .win (preferred)
         for candidate in "$bdir"/*/*/"${boot_part}.emmc.win"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found TWRP backup boot image: $candidate"
                 echo "$candidate"
                 return 0
@@ -302,6 +341,7 @@ _find_pre_placed_image() {
         # Gzip compressed .win.gz
         for candidate in "$bdir"/*/*/"${boot_part}.emmc.win.gz"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found compressed TWRP backup: $candidate (gzip)"
                 echo "$candidate"
                 return 0
@@ -310,6 +350,7 @@ _find_pre_placed_image() {
         # LZ4 compressed .win.lz4
         for candidate in "$bdir"/*/*/"${boot_part}.emmc.win.lz4"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found compressed TWRP backup: $candidate (lz4)"
                 echo "$candidate"
                 return 0
@@ -318,6 +359,7 @@ _find_pre_placed_image() {
         # Some recoveries use plain .img naming
         for candidate in "$bdir"/*/*/"${boot_part}.img"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found recovery backup boot image: $candidate"
                 echo "$candidate"
                 return 0
@@ -332,6 +374,7 @@ _find_pre_placed_image() {
         [ -d "$bdir" ] 2>/dev/null || continue
         for candidate in "$bdir"/*/"${boot_part}.img"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found CWM/Nandroid backup: $candidate"
                 echo "$candidate"
                 return 0
@@ -567,6 +610,28 @@ _confirm_yn() {
     if [ -t 0 ]; then
         printf '\n%s [Y/n]: ' "$prompt" >&2
         read -r answer </dev/tty 2>/dev/null || answer=""
+    else
+        answer="Y"
+    fi
+    case "$answer" in
+        ''|y|Y|yes|YES|Yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_confirm_yn_timeout() {
+    # $1 = prompt text, $2 = timeout seconds (default 30).
+    # Returns 0 for yes (or on timeout — auto-proceeds), 1 for no.
+    local prompt="$1" timeout="${2:-30}" answer=""
+    if [ -t 0 ]; then
+        printf '\n%s [Y/n] (auto-yes in %ss): ' "$prompt" "$timeout" >&2
+        # shellcheck disable=SC3045  # read -t: mksh/bash/busybox-ash extension
+        if read -r -t "$timeout" answer </dev/tty 2>/dev/null; then
+            : # got an answer before timeout
+        else
+            printf '\n  (no response — proceeding automatically)\n' >&2
+            answer="Y"
+        fi
     else
         answer="Y"
     fi
@@ -1008,6 +1073,19 @@ run_boot_image_acquire() {
         ux_print "  Will try pre-placed image or factory download..."
     fi
 
+    # Retrieve device build and codename here — needed in both step 2
+    # (pre-placed image build-ID matching) and step 3 (local/factory file).
+    local codename build_id build_id_lower=""
+    codename=$(_reg_get HOM_DEV_DEVICE)
+    build_id=$(_reg_get HOM_DEV_BUILD_ID)
+    # Fallback: try reading build ID from system properties directly
+    if [ -z "$build_id" ]; then
+        build_id=$(getprop ro.build.id 2>/dev/null || true)
+    fi
+    if [ -n "$build_id" ]; then
+        build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
+    fi
+
     # ── 2. Pre-placed image file ──────────────────────────────
     # Scans: boot_work dir, /sdcard/Download, Magisk stock backup,
     # TWRP/OrangeFox/PBRP/SHRP/RedWolf/CWM/Nandroid backup folders.
@@ -1024,54 +1102,89 @@ run_boot_image_acquire() {
         ux_print "    (boot_work, /sdcard/Download, Magisk stock backup,"
         ux_print "     TWRP, OrangeFox, PBRP, SHRP, RedWolf, CWM, Nandroid)"
 
-        local pre_placed
-        pre_placed=$(_find_pre_placed_image "$boot_part" 2>/dev/null || true)
+        local pre_placed skipped_images="" _pp_accepted
+        while true; do
+            pre_placed=$(_find_pre_placed_image "$boot_part" "$skipped_images" 2>/dev/null || true)
+            [ -n "$pre_placed" ] || break
 
-        if [ -n "$pre_placed" ]; then
-            ux_print "  ✓  Found image: $pre_placed"
             log_info "Pre-placed/backup image found: $pre_placed"
 
+            # ── Build-ID check ────────────────────────────────
+            # Try to extract the build ID embedded in the image binary.
+            local img_build img_build_lower=""
+            img_build=$(_extract_build_id_from_image "$pre_placed")
+            if [ -n "$img_build" ]; then
+                img_build_lower=$(echo "$img_build" | tr '[:upper:]' '[:lower:]')
+            fi
+
+            # ── User confirmation ─────────────────────────────
+            _pp_accepted=0  # default: accepted (non-interactive / no build info)
             if [ -t 0 ] 2>/dev/null; then
-                if ! _confirm_yn "Use this detected image: $pre_placed?"; then
-                    log_info "User declined detected pre-placed image $pre_placed"
-                    pre_placed=""
+                if [ -n "$img_build" ] && [ -n "$build_id_lower" ]; then
+                    if [ "$img_build_lower" = "$build_id_lower" ]; then
+                        # Build match: show info, auto-proceed after 30 s
+                        ux_print "  ✓  Found image: $pre_placed"
+                        ux_print "     Image build : $img_build"
+                        ux_print "     Device build: $build_id"
+                        ux_print "     ✓  Builds match."
+                        log_info "Build ID match: image=$img_build device=$build_id"
+                        _confirm_yn_timeout "Use this image (builds match)?" || _pp_accepted=1
+                    else
+                        # Build mismatch: show both numbers, require explicit Y/N
+                        ux_print "  ⚠  Found image: $pre_placed"
+                        ux_print "     Image build : $img_build"
+                        ux_print "     Device build: $build_id"
+                        ux_print "     Builds do NOT match — a mismatched image may cause"
+                        ux_print "     boot failures or anti-rollback bricks."
+                        log_warn "Build ID mismatch: image=$img_build device=$build_id"
+                        _confirm_yn "Use this image despite build mismatch?" || _pp_accepted=1
+                    fi
+                else
+                    # Build ID not determinable from image binary
+                    ux_print "  ✓  Found image: $pre_placed"
+                    _confirm_yn "Use this detected image: $pre_placed?" || _pp_accepted=1
                 fi
             fi
 
-            # Handle TWRP compressed backups
-            if [ -n "$pre_placed" ]; then
-                case "$pre_placed" in
-                    *.win.gz)
-                        ux_print "  Decompressing gzip TWRP backup..."
-                        if _has_cmd gzip; then
-                            gzip -dc "$pre_placed" > "$out_img" 2>/dev/null
-                            log_info "Decompressed gzip backup: $pre_placed → $out_img"
-                        else
-                            log_warn "gzip not available — cannot decompress $pre_placed"
-                            ux_print "  ✗  gzip not available to decompress backup"
-                            pre_placed=""
-                        fi
-                        ;;
-                    *.win.lz4)
-                        ux_print "  Decompressing lz4 TWRP backup..."
-                        if _has_cmd lz4; then
-                            lz4 -dc "$pre_placed" > "$out_img" 2>/dev/null
-                            log_info "Decompressed lz4 backup: $pre_placed → $out_img"
-                        else
-                            log_warn "lz4 not available — cannot decompress $pre_placed"
-                            ux_print "  ✗  lz4 not available to decompress backup"
-                            ux_print "     Install: apt install lz4 (host) / pkg install lz4 (Termux)"
-                            pre_placed=""
-                        fi
-                        ;;
-                    *)
-                        # Uncompressed — direct copy (.img or .emmc.win)
-                        if [ "$pre_placed" != "$out_img" ]; then
-                            log_exec "cp_boot_image" cp "$pre_placed" "$out_img"
-                        fi
-                        ;;
-                esac
+            if [ "$_pp_accepted" -ne 0 ]; then
+                log_info "User declined image $pre_placed — searching for next candidate"
+                skipped_images="${skipped_images}${pre_placed}
+"
+                continue
             fi
+
+            # ── Copy / decompress ─────────────────────────────
+            case "$pre_placed" in
+                *.win.gz)
+                    ux_print "  Decompressing gzip TWRP backup..."
+                    if _has_cmd gzip; then
+                        gzip -dc "$pre_placed" > "$out_img" 2>/dev/null
+                        log_info "Decompressed gzip backup: $pre_placed → $out_img"
+                    else
+                        log_warn "gzip not available — cannot decompress $pre_placed"
+                        ux_print "  ✗  gzip not available to decompress backup"
+                        pre_placed=""
+                    fi
+                    ;;
+                *.win.lz4)
+                    ux_print "  Decompressing lz4 TWRP backup..."
+                    if _has_cmd lz4; then
+                        lz4 -dc "$pre_placed" > "$out_img" 2>/dev/null
+                        log_info "Decompressed lz4 backup: $pre_placed → $out_img"
+                    else
+                        log_warn "lz4 not available — cannot decompress $pre_placed"
+                        ux_print "  ✗  lz4 not available to decompress backup"
+                        ux_print "     Install: apt install lz4 (host) / pkg install lz4 (Termux)"
+                        pre_placed=""
+                    fi
+                    ;;
+                *)
+                    # Uncompressed — direct copy (.img or .emmc.win)
+                    if [ "$pre_placed" != "$out_img" ]; then
+                        log_exec "cp_boot_image" cp "$pre_placed" "$out_img"
+                    fi
+                    ;;
+            esac
 
             if [ -n "$pre_placed" ] && [ -f "$out_img" ] && [ -s "$out_img" ]; then
                 boot_dev="$pre_placed"
@@ -1104,8 +1217,11 @@ run_boot_image_acquire() {
             else
                 log_warn "Copy/decompress of pre-placed image failed"
             fi
-        else
-            ux_print "  No pre-placed or backup ${boot_part}.img found."
+            break
+        done
+
+        if [ -z "$acquire_method" ]; then
+            ux_print "  No usable pre-placed or backup ${boot_part}.img found."
         fi
     fi
 
@@ -1113,16 +1229,7 @@ run_boot_image_acquire() {
     #       or Google factory image download (Pixel devices) ──────
 
     if [ -z "$acquire_method" ]; then
-        local codename build_id build_id_lower=""
-        codename=$(_reg_get HOM_DEV_DEVICE)
-        build_id=$(_reg_get HOM_DEV_BUILD_ID)
-        # Fallback: try reading build ID from system properties directly
-        if [ -z "$build_id" ]; then
-            build_id=$(getprop ro.build.id 2>/dev/null || true)
-        fi
-        if [ -n "$build_id" ]; then
-            build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
-        fi
+        # codename, build_id, build_id_lower already populated before step 2
 
         # ── 3a. Ask the user for a local file first (img or zip) ──
         local user_path=""
