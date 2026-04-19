@@ -33,7 +33,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS_DIR="$REPO_ROOT/tools"
 DIST_DIR="$REPO_ROOT/dist"
 BUILD_DIR="$REPO_ROOT/build"
-HOM_TMPDIR="${TMPDIR:-/tmp}"
 
 # ── defaults ──────────────────────────────────────────────────
 MAGISK_VERSION="v30.7"
