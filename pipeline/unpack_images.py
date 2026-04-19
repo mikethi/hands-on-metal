@@ -706,8 +706,10 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 
     print(f"    ↳ ramdisk decompressed: {len(cpio_data)} bytes")
 
+    safe_stem = "".join(ch if (ch.isalnum() or ch in "._-") else "_" for ch in img_path.stem)
+
     # Extract CPIO
-    out_dir = dump / "ramdisk" / img_path.stem
+    out_dir = dump / "ramdisk" / safe_stem
     out_dir.mkdir(parents=True, exist_ok=True)
     files = extract_cpio(cpio_data, out_dir)
     result["ramdisk_files"] = files
@@ -727,7 +729,7 @@ def process_image(img_path: Path, dump: Path, run_id: int,
     # Register extracted files in collected_file
     for fname in files:
         src_path = f"ramdisk:{image_rel}/{fname}"
-        local_rel = (Path("ramdisk") / img_path.stem / fname.lstrip("/")).as_posix()
+        local_rel = (Path("ramdisk") / safe_stem / fname.lstrip("/")).as_posix()
         p = dump / local_rel
         size = p.stat().st_size if p.exists() else None
         try:
@@ -742,7 +744,7 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 
     # Save DTB if present (for vendor_boot)
     if img.dtb_data:
-        dtb_out = dump / "ramdisk" / img_path.stem / "dtb.img"
+        dtb_out = dump / "ramdisk" / safe_stem / "dtb.img"
         dtb_out.write_bytes(img.dtb_data)
         print(f"    ↳ DTB saved ({len(img.dtb_data)} bytes)")
 
@@ -778,7 +780,10 @@ def find_images(dump: Path) -> list[Path]:
     uniq_dirs: list[Path] = []
     seen_dirs: set[str] = set()
     for d in search_dirs:
-        key = str(d.resolve()) if d.exists() else str(d)
+        try:
+            key = str(d.resolve())
+        except OSError:
+            key = str(d)
         if key in seen_dirs:
             continue
         seen_dirs.add(key)

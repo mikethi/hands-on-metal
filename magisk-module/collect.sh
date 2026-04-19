@@ -487,14 +487,15 @@ fi
 # the boot image and any additional extracted partition images.
 BOOT_WORK_ROOT="${HOME:-/data/local/tmp}/hands-on-metal/boot_work"
 if [ -d "$BOOT_WORK_ROOT" ]; then
-    log "Importing option-5 extracted images from $BOOT_WORK_ROOT (fallback source)..."
+    log "Importing pre-extracted option-5 images from $BOOT_WORK_ROOT..."
     mkdir -p "$OUT/boot_images" "$OUT/partitions"
 
     imported_count=0
 
     # Single-image outputs from option 5 (prefer current collect output if present)
     for src in \
-        "$BOOT_WORK_ROOT"/*_original.img \
+        "$BOOT_WORK_ROOT"/boot_original.img \
+        "$BOOT_WORK_ROOT"/init_boot_original.img \
         "$BOOT_WORK_ROOT"/boot.img \
         "$BOOT_WORK_ROOT"/init_boot.img \
         "$BOOT_WORK_ROOT"/vendor_boot.img \
@@ -502,7 +503,13 @@ if [ -d "$BOOT_WORK_ROOT" ]; then
         [ -f "$src" ] || continue
         base=$(basename "$src")
         case "$base" in
-            *_original.img) dest_name="${base%_original.img}.img" ;;
+            # Option 5 stores the target acquisition as *_original.img.
+            # We normalize to canonical partition names for downstream
+            # parsers (boot.img / init_boot.img). Existing collected files
+            # are never overwritten because we copy only when destination
+            # does not already exist.
+            boot_original.img)      dest_name="boot.img" ;;
+            init_boot_original.img) dest_name="init_boot.img" ;;
             *)              dest_name="$base" ;;
         esac
         dest="$OUT/boot_images/$dest_name"
