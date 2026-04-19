@@ -180,6 +180,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
             {"mod_id": 2, "name": "snd", "size": 50, "use_count": 0, "used_by": ""},
         ]
         ep.generate_deviceinfo(props, modules)
+        # Active module (use_count=2) should be consumed; inactive remains
         remaining_names = [m["name"] for m in modules]
         self.assertNotIn("wlan", remaining_names)
         self.assertIn("snd", remaining_names)
@@ -188,6 +189,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
         props = self._props()
         modules: list[dict] = []
         ep.generate_deviceinfo(props, modules)
+        # Key identity props must have been consumed by the generator
         for key in ("ro.product.model", "ro.product.manufacturer",
                     "ro.board.platform", "ro.product.cpu.abi"):
             self.assertNotIn(key, props, f"prop {key!r} was not consumed")

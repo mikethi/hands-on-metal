@@ -277,7 +277,7 @@ def generate_deviceinfo(
 
     # Build DTB path following postmarketOS convention for Samsung/Exynos/Google:
     # exynos/<manufacturer>/<platform>-<board>  or  <platform>-<board>
-    soc_mfr = (sysconfig or {}).get("soc.manufacturer", "").lower()
+    soc_mfr = sys.get("soc.manufacturer", "").lower()
     if not soc_mfr:
         soc_mfr = (manufacturer or "").lower()
     exynos_keywords = ("samsung", "google", "exynos", "gs1", "zuma")
@@ -416,9 +416,12 @@ def _chassis_from_props(props: dict[str, str]) -> str:
 
 
 def _external_storage_from_props(props: dict[str, str]) -> str:
-    """Derive deviceinfo_external_storage from ro.build.characteristics."""
-    # characteristics is already popped by _chassis_from_props, so check via the prop
-    # (it was consumed above). We look at device/model name as secondary hint.
+    """Derive deviceinfo_external_storage.
+
+    ro.build.characteristics is consumed by _chassis_from_props, which the
+    caller must invoke first.  Any remaining indication of SD-card support
+    is inferred from the model name as a secondary signal.
+    """
     model = props.get("ro.product.model", "").lower()
     if "tablet" in model:
         return "true"
