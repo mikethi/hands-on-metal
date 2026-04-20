@@ -201,6 +201,11 @@ VENDOR_HDR_V3_STRUCT = struct.Struct("<" + "".join(_VENDOR_HDR_V3_FMT))
 #                      vendor_ramdisk_table_entry_size, bootconfig_size
 _VENDOR_HDR_V4_EXTRA = struct.Struct("<IIII")
 
+# vendor_boot v4 ramdisk table entry (108 bytes):
+#   ramdisk_size(4) + ramdisk_offset(4) + ramdisk_type(4)
+#   + ramdisk_name(32) + board_id(16 × uint32 = 64)
+_VENDOR_RAMDISK_TABLE_ENTRY = struct.Struct("<III32s64s")
+
 
 def _round_up(n: int, page: int) -> int:
     return ((n + page - 1) // page) * page
@@ -219,6 +224,11 @@ class BootImage:
         self.cmdline: str = ""
         self.name: str = ""
         self.vendor: bool = False  # True for vendor_boot.img
+        # vendor_boot v4: individual ramdisk segments from the ramdisk table.
+        # Empty for all other image types.  When populated, each entry is a
+        # raw (still compressed) ramdisk blob that should be processed
+        # independently in addition to the combined ramdisk_data blob.
+        self.ramdisk_segments: list[bytes] = []
 
 
 def parse_boot_image(data: bytes) -> BootImage | None:
@@ -335,6 +345,28 @@ def _parse_vendor_boot(data: bytes) -> BootImage | None:
     img.ramdisk_data = data[off_ramdisk : off_ramdisk + vendor_ramdisk_size]
     if dtb_size:
         img.dtb_data = data[off_dtb : off_dtb + dtb_size]
+
+    # v4: parse the vendor ramdisk table so every individual segment is
+    # available for extraction.  The table lives after the DTB section.
+    if hdr_version >= 4 and len(data) > VENDOR_HDR_V3_STRUCT.size + _VENDOR_HDR_V4_EXTRA.size:
+        (table_size, entry_num,
+         entry_size, bootconfig_size) = _VENDOR_HDR_V4_EXTRA.unpack_from(
+            data, VENDOR_HDR_V3_STRUCT.size)
+        off_table = off_dtb + dtb_pages * ps
+        if (entry_num > 0
+                and entry_size > 0
+                and off_table + table_size <= len(data)):
+            for i in range(entry_num):
+                entry_off = off_table + i * entry_size
+                if entry_off + _VENDOR_RAMDISK_TABLE_ENTRY.size > len(data):
+                    break
+                (seg_size, seg_offset, seg_type,
+                 _seg_name, _board_id) = _VENDOR_RAMDISK_TABLE_ENTRY.unpack_from(
+                    data, entry_off)
+                seg_start = off_ramdisk + seg_offset
+                seg_end   = seg_start + seg_size
+                if seg_size > 0 and seg_end <= len(data):
+                    img.ramdisk_segments.append(data[seg_start:seg_end])
 
     return img
 
