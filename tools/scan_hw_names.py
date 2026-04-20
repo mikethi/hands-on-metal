@@ -238,6 +238,236 @@ MODULE_HW: list[tuple[str, str]] = [
 ]
 
 
+# ── Voltage rail → hardware category table ───────────────────────────────────
+# Maps regex patterns (searched case-insensitively over file content) to the
+# hardware category each power rail or protection event belongs to.
+# Specific rails for Tensor G3 (zuma, S2MPG12 main + S2MPG13 sub PMICs) are
+# listed first so they take priority over the generic BUCK catch-all.
+#
+# Over-current (OCP) and under-voltage (UVLO) trigger names come verbatim from
+# vendor/etc/init/vendor.google.battery_mitigation-default.rc and are the same
+# names the PMIC mitigation driver exposes under
+# /sys/devices/virtual/pmic/mitigation/.
+RAIL_CATEGORY_TABLE: list[tuple[str, str]] = [
+    # ── OCP protection triggers (named after the hw block they guard) ──────
+    (r"\bocp[_\-]cpu\d*",           "power"),     # CPU rail over-current
+    (r"\bsoft_ocp[_\-]cpu\d*",      "power"),
+    (r"\bocp[_\-]gpu",              "display"),   # GPU rail over-current
+    (r"\bsoft_ocp[_\-]gpu",         "display"),
+    (r"\bocp[_\-]tpu",              "tpu"),       # TPU rail over-current
+    (r"\bsoft_ocp[_\-]tpu",         "tpu"),
+    # ── UVLO / battery-overcurrent / SMPL events ──────────────────────────
+    (r"\bbatoilo\d*",               "battery"),   # battery over-current lockout
+    (r"\buvlo\d*",                  "battery"),   # under-voltage lockout
+    (r"\bsmpl\b",                   "battery"),   # sudden momentary power loss
+    # ── Named PMIC rails for Tensor G3 (zuma SoC) ─────────────────────────
+    # Main PMIC (S2MPG12):  BUCK1M–BUCK10M
+    # Sub  PMIC (S2MPG13):  BUCK1S–BUCK10S, BUCKBS/CS/DS/AS
+    # Rail assignments inferred from Pixel 8 Pro board files:
+    (r"\bVSYS_PWR_MMWAVE\b",        "modem"),     # mmWave 5G supply
+    (r"\bBUCK9M\b",                 "modem"),     # mmWave sub-6 rail
+    (r"\bBUCK12S\b",                "display"),   # display DSI power
+    (r"\bBUCK3M\b",                 "display"),   # GPU core supply (main PMIC)
+    (r"\bBUCK3S\b",                 "display"),   # GPU core supply (sub PMIC)
+    (r"\bBUCK6M\b",                 "tpu"),       # TPU core rail
+    (r"\bBUCK6S\b",                 "tpu"),
+    (r"\bBUCK4M\b",                 "system"),    # MIF (memory interconnect)
+    (r"\bBUCK4S\b",                 "system"),
+    (r"\bBUCK5M\b",                 "modem"),     # baseband / modem
+    (r"\bBUCK5S\b",                 "modem"),
+    # CPU cluster rails (Cortex-A510 little, A715 mid, X3 prime)
+    (r"\bBUCK[12]M\b",              "power"),     # CPU little / mid clusters
+    (r"\bBUCK[12]S\b",              "power"),     # CPU big cluster
+    (r"\bBUCK[78910]M\b",           "power"),     # misc / always-on rails
+    (r"\bBUCK[789]S\b",             "power"),
+    (r"\bBUCK[ABCD]S\b",            "power"),     # special sub-PMIC rails
+    # Generic PMIC rail catch-alls (must come after specific patterns above)
+    (r"\bBUCK\d+[MS]?\b",           "power"),
+    (r"\bLDO\d+[MS]?\b",            "power"),
+    # ── Generic regulator / voltage keywords ──────────────────────────────
+    (r"\bvdd[_\-]\w+",              "power"),
+    (r"\bvreg[_\-]\w+",             "power"),
+    (r"\bldo[_\-]\w+",              "power"),
+    (r"\bvout[_\-]\w+",             "power"),
+    (r"\bvsys\b",                   "power"),
+    (r"\bvbus\b",                   "usb"),       # USB VBUS
+    (r"\bvbat\b",                   "battery"),   # battery voltage rail
+    # ── DVFS (dynamic voltage & frequency scaling) ────────────────────────
+    (r"\bdvfs[_\-]",                "power"),
+    # ── Numeric voltage values ────────────────────────────────────────────
+    (r"\b\d{3,5}\s*m[Vv]\b",        "power"),     # e.g. 1800mV, 900mV
+    (r"\b\d{4,7}\s*[uµ][Vv]\b",     "power"),     # e.g. 900000uV
+    (r"\bmin_uV\b",                 "power"),
+    (r"\bmax_uV\b",                 "power"),
+    (r"\buV_step\b",                "power"),
+]
+
+# Maps substrings found in HAL-service file paths → primary hw category.
+# Used to tag the *file* (not just its rail content) so cross-group files
+# can be found even when their filename makes the association explicit.
+HAL_SVCFILE_CATEGORIES: list[tuple[str, str]] = [
+    ("power.stats",         "power"),
+    ("power",               "power"),
+    ("battery_mitigation",  "battery"),
+    ("battery",             "battery"),
+    ("thermal",             "thermal"),
+    ("health",              "health"),
+    ("vibrator",            "vibrator"),
+    ("charger",             "charger"),
+    ("display",             "display"),
+    ("graphics",            "display"),
+    ("audio",               "audio"),
+    ("sensors",             "sensors"),
+    ("camera",              "camera"),
+    ("bluetooth",           "bluetooth"),
+    ("wifi",                "wifi"),
+    ("modem",               "modem"),
+    ("gnss",                "gps"),
+    ("gps",                 "gps"),
+    ("nfc",                 "nfc"),
+    ("usb",                 "usb"),
+    ("neuralnetworks",      "nnapi"),
+    ("edgetpu",             "tpu"),
+    ("secure_element",      "se"),
+    ("keymint",             "keymaster"),
+    ("gatekeeper",          "gatekeeper"),
+    ("weaver",              "weaver"),
+    ("boot",                "boot"),
+    ("drm",                 "drm"),
+    ("memtrack",            "memtrack"),
+    ("contexthub",          "contexthub"),
+    ("vibrator",            "vibrator"),
+]
+
+# File extensions that are binary/opaque and should be skipped
+_SKIP_EXTS: frozenset[str] = frozenset({
+    ".pb", ".so", ".ko", ".apk", ".jar", ".png", ".gz", ".img",
+    ".zip", ".bin", ".dtb", ".odex", ".vdex", ".art",
+})
+
+# Path segments that qualify a file as "HAL-related" for the voltage scan.
+# Any file whose path contains at least one of these strings is included.
+_HAL_PATH_SEGS: tuple[str, ...] = (
+    "vintf", "init", "audio", "power", "thermal", "battery", "vibrator",
+    "display", "camera", "sensors", "bluetooth", "wifi", "health", "charger",
+    "gps", "gnss", "nfc", "usb", "graphics", "drm", "media", "neuralnetworks",
+    "edgetpu", "keymint", "gatekeeper", "weaver", "secure_element",
+)
+
+
+def _rail_hits(text: str) -> dict[str, set[str]]:
+    """Return {matched_rail_string: set_of_categories} for a block of text."""
+    result: dict[str, set[str]] = {}
+    for pattern, cat in RAIL_CATEGORY_TABLE:
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            rail = m.group(0).strip()
+            result.setdefault(rail, set()).add(cat)
+    return result
+
+
+def _svcfile_categories(rel_path: str) -> set[str]:
+    """Return categories implied purely by the service file's path/name."""
+    path_lower = rel_path.lower()
+    cats: set[str] = set()
+    for token, cat in HAL_SVCFILE_CATEGORIES:
+        if token in path_lower:
+            cats.add(cat)
+    return cats
+
+
+def scan_voltage_rails(reader: "DumpReader") -> list[dict]:
+    """
+    Scan all HAL-related text files in the dump for voltage / PMIC rail data.
+
+    Files searched:
+      • vendor/etc/init/**  (HAL service RC files, platform init RCs)
+      • system/etc/init/**
+      • vendor/etc/vintf/** and vendor/etc/vintf/manifest/**
+      • system/etc/vintf/**
+      • vendor/etc/audio/**, vendor/etc/power_stats/** (HAL config XMLs)
+      • proc/**             (kernel sysfs dumps, if collected)
+
+    A record is emitted for each file that contains rail references spanning
+    ≥ 2 distinct hardware categories.  This highlights cross-group power
+    files that need attention during porting.
+    """
+    records: list[dict] = []
+    seen: set[str] = set()
+
+    def _try(rel_path: str, content: str) -> None:
+        if rel_path in seen:
+            return
+        seen.add(rel_path)
+
+        # Must be a HAL-related path
+        pl = rel_path.lower()
+        if not any(seg in pl for seg in _HAL_PATH_SEGS):
+            return
+
+        hits = _rail_hits(content)
+        if not hits:
+            return
+
+        # Merge categories from rail hits + filename heuristic
+        all_cats: set[str] = set()
+        for cats in hits.values():
+            all_cats.update(cats)
+        all_cats.update(_svcfile_categories(rel_path))
+
+        # Only report files spanning ≥ 2 distinct hw categories
+        if len(all_cats) < 2:
+            return
+
+        # Build per-category → rail list
+        cat_rails: dict[str, list[str]] = {}
+        for rail, cats in hits.items():
+            for cat in cats:
+                cat_rails.setdefault(cat, []).append(rail)
+        # Deduplicate rail lists
+        cat_rails = {k: sorted(set(v)) for k, v in cat_rails.items()}
+
+        records.append({
+            "type":       "voltage_file",
+            "source":     rel_path,
+            "uid":        rel_path,
+            "categories": sorted(all_cats),
+            "rails":      sorted(set(hits.keys())),
+            "cat_rails":  cat_rails,
+            "bare_metal": any(tok in rel_path for tok in BARE_METAL_HW_IDS),
+            "category":   "power",
+        })
+
+    # Walk all candidate directories
+    scan_dirs = (
+        "vendor/etc/init",
+        "vendor/etc/vintf",
+        "vendor/etc/vintf/manifest",
+        "vendor/etc/audio",
+        "vendor/etc/power_stats",
+        "system/etc/init",
+        "system/etc/vintf",
+        "system/etc/vintf/manifest",
+        "proc",
+        "vendor/etc",
+        "system/etc",
+    )
+
+    for rel_dir in scan_dirs:
+        # Non-XML files via list_files
+        for rel_path in reader.list_files(rel_dir):
+            suffix = Path(rel_path).suffix.lower()
+            if suffix in _SKIP_EXTS or rel_path.lower().endswith((".cil", ".sha256", ".contexts")):
+                continue
+            content = reader.read_text(rel_path)
+            if content:
+                _try(rel_path, content)
+        # XML files via glob_xml
+        for rel_path, content in reader.glob_xml(rel_dir):
+            _try(rel_path, content)
+
+    return records
+
+
 # ── Category resolution ───────────────────────────────────────────────────────
 
 def aidl_category(name: str) -> str:
