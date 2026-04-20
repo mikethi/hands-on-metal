@@ -649,8 +649,35 @@ def _align4(n: int) -> int:
     return (n + 3) & ~3
 
 
+def _find_next_cpio_newc(data: bytes, start: int) -> int:
+    """Return the lowest offset ≥ *start* where a newc CPIO header magic begins.
+
+    Scans the full remainder of *data* so that the caller can resync after
+    corrupt bytes or padding.  Returns -1 when no further magic is found.
+    """
+    idx1 = data.find(b"070701", start)
+    idx2 = data.find(b"070702", start)
+    candidates = [i for i in (idx1, idx2) if i >= 0]
+    return min(candidates) if candidates else -1
+
+
+def _find_next_cpio_odc(data: bytes, start: int) -> int:
+    """Return the lowest offset ≥ *start* where an odc CPIO header magic begins.
+
+    Returns -1 when none is found.
+    """
+    return data.find(b"070707", start)
+
+
 def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
-    """Extract a newc CPIO archive; return list of extracted paths."""
+    """Extract a newc CPIO archive; return list of extracted paths.
+
+    The parser resyncs on bad magic bytes, malformed header fields, or
+    implausible size values instead of stopping immediately.  After each
+    ``TRAILER!!!`` record it continues scanning so that concatenated CPIO
+    archives (e.g. Android vendor_boot v4 multi-ramdisk segments) are
+    fully processed.
+    """
     extracted: list[str] = []
     pos = 0
 
@@ -658,15 +685,36 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
         if pos + 110 > len(data):
             break
         hdr = data[pos:pos + 110]
-        if hdr[:6] not in (b"070701", b"070702"):
-            break
 
-        # Parse fixed-width hex fields
+        # ── mid-file probe: if magic is wrong, scan ahead to resync ──────────
+        if hdr[:6] not in (b"070701", b"070702"):
+            next_pos = _find_next_cpio_newc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+
+        # Parse fixed-width hex fields; resync on any decode error
         def _hex(start: int, length: int = 8) -> int:
             return int(hdr[start:start + length], 16)
 
-        namesize = _hex(94)
-        filesize = _hex(54)
+        try:
+            namesize = _hex(94)
+            filesize = _hex(54)
+        except ValueError:
+            next_pos = _find_next_cpio_newc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+
+        # Sanity-check sizes to avoid acting on garbage data
+        if namesize == 0 or namesize > 4096 or filesize > len(data) - pos:
+            next_pos = _find_next_cpio_newc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
         pos += 110
         # Name (null-terminated, padded to 4-byte boundary after header+name)
@@ -675,7 +723,13 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
         pos += _align4(110 + namesize) - 110
 
         if name == "TRAILER!!!":
-            break
+            # After the trailer, skip any alignment padding and look for the
+            # next concatenated archive rather than stopping.
+            next_pos = _find_next_cpio_newc(data, pos)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
         file_data = data[pos:pos + filesize]
         pos += _align4(filesize)
@@ -693,7 +747,12 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
 
 
 def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
-    """Extract an odc (old portable) CPIO archive."""
+    """Extract an odc (old portable) CPIO archive.
+
+    The parser resyncs on bad magic bytes, malformed header fields, or
+    implausible size values instead of stopping immediately, and continues
+    after each ``TRAILER!!!`` record to handle concatenated archives.
+    """
     extracted: list[str] = []
     pos = 0
 
@@ -701,14 +760,35 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
         if pos + 76 > len(data):
             break
         hdr = data[pos:pos + 76]
+
+        # ── mid-file probe: if magic is wrong, scan ahead to resync ──────────
         if hdr[:6] != b"070707":
-            break
+            next_pos = _find_next_cpio_odc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
         def _oct(start: int, length: int) -> int:
             return int(hdr[start:start + length], 8)
 
-        namesize = _oct(59, 6)
-        filesize = _oct(65, 11)
+        try:
+            namesize = _oct(59, 6)
+            filesize = _oct(65, 11)
+        except ValueError:
+            next_pos = _find_next_cpio_odc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+
+        # Sanity-check sizes to avoid acting on garbage data
+        if namesize == 0 or namesize > 4096 or filesize > len(data) - pos:
+            next_pos = _find_next_cpio_odc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
         pos += 76
         name_raw = data[pos:pos + namesize]
@@ -716,7 +796,12 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
         pos += namesize
 
         if name == "TRAILER!!!":
-            break
+            # Continue scanning for any following concatenated archive.
+            next_pos = _find_next_cpio_odc(data, pos)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
         file_data = data[pos:pos + filesize]
         pos += filesize
