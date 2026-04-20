@@ -147,9 +147,8 @@ else
                 echo "ERROR: repository sync failed." >&2
                 exit 1
             fi
-        elif ! _hom_sync_repo "hands-on-metal" 2>/dev/null; then
-            echo "  ⚠  Could not update existing clone (network or merge issue)." >&2
-            echo "     Continuing with the current version." >&2
+        else
+            echo "Skipping repo sync (--no-sync)."
         fi
     else
         git clone https://github.com/mikethi/hands-on-metal.git
