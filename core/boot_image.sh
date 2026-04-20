@@ -652,17 +652,25 @@ _prompt_option5_env_table_mode() {
     #   HOM_OPTION5_ENV_TABLE_FACTORY_LINK
     #   HOM_OPTION5_ENV_TABLE_BOTH_LINK
     #   HOM_OPTION5_ENV_TABLE_SELECTED_LINK
-    local mode="both" input=""
+    local mode="both" input="" input_norm=""
     local links_dir="$BOOT_WORK_DIR/env_table_links"
     local real_link="$links_dir/real_hardware_env_table.link"
     local factory_link="$links_dir/factory_image_env_table.link"
     local both_link="$links_dir/both_env_tables.link"
     local selected_link="$both_link"
 
-    mkdir -p "$links_dir" 2>/dev/null || true
-    ln -sfn /dev/null "$real_link" 2>/dev/null || true
-    ln -sfn /dev/null "$factory_link" 2>/dev/null || true
-    ln -sfn /dev/null "$both_link" 2>/dev/null || true
+    if ! mkdir -p "$links_dir" 2>/dev/null; then
+        log_warn "Could not create env-table links directory: $links_dir"
+    fi
+    if ! ln -sfn /dev/null "$real_link" 2>/dev/null; then
+        log_warn "Could not create /dev/null link: $real_link"
+    fi
+    if ! ln -sfn /dev/null "$factory_link" 2>/dev/null; then
+        log_warn "Could not create /dev/null link: $factory_link"
+    fi
+    if ! ln -sfn /dev/null "$both_link" 2>/dev/null; then
+        log_warn "Could not create /dev/null link: $both_link"
+    fi
 
     ux_print ""
     ux_print "  ┌────────────────────────────────────────────────────────────────────┐"
@@ -674,11 +682,11 @@ _prompt_option5_env_table_mode() {
     ux_print "  ├────────────────────────────────────────────────────────────────────┤"
     ux_print "  │ 3) Both tables                                                     │"
     ux_print "  ├────────────────────────────────────────────────────────────────────┤"
-    ux_print "  │ Links (all point to /dev/null placeholders):                      │"
-    ux_print "  │   real   : $real_link"
-    ux_print "  │   factory: $factory_link"
-    ux_print "  │   both   : $both_link"
+    ux_print "  │ Links: see below (all point to /dev/null placeholders)            │"
     ux_print "  └────────────────────────────────────────────────────────────────────┘"
+    ux_print "    real   : $real_link"
+    ux_print "    factory: $factory_link"
+    ux_print "    both   : $both_link"
 
     if [ -t 0 ] 2>/dev/null; then
         ux_prompt input \
@@ -686,19 +694,21 @@ _prompt_option5_env_table_mode() {
             "3"
     else
         input="3"
-        log_info "Non-interactive mode: defaulting option 5 env table mode to BOTH"
+        log_info "Non-interactive mode: defaulting option 5 env table mode to both"
     fi
 
-    case "$input" in
-        1|real|REAL|hardware|HARDWARE)
+    input_norm=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
+
+    case "$input_norm" in
+        1|real|hardware)
             mode="real_hardware"
             selected_link="$real_link"
             ;;
-        2|factory|FACTORY|factory_image)
+        2|factory|factory_image)
             mode="factory_image"
             selected_link="$factory_link"
             ;;
-        3|both|BOTH|'')
+        3|both|'')
             mode="both"
             selected_link="$both_link"
             ;;
