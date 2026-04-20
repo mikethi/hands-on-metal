@@ -642,6 +642,82 @@ _confirm_yn_timeout() {
     esac
 }
 
+_prompt_option5_env_table_mode() {
+    # Prompt user to choose env-table mode for option 5 after boot-image
+    # detection output is shown.
+    #
+    # Writes:
+    #   HOM_OPTION5_ENV_TABLE_MODE
+    #   HOM_OPTION5_ENV_TABLE_REAL_LINK
+    #   HOM_OPTION5_ENV_TABLE_FACTORY_LINK
+    #   HOM_OPTION5_ENV_TABLE_BOTH_LINK
+    #   HOM_OPTION5_ENV_TABLE_SELECTED_LINK
+    local mode="both" input=""
+    local links_dir="$BOOT_WORK_DIR/env_table_links"
+    local real_link="$links_dir/real_hardware_env_table.link"
+    local factory_link="$links_dir/factory_image_env_table.link"
+    local both_link="$links_dir/both_env_tables.link"
+    local selected_link="$both_link"
+
+    mkdir -p "$links_dir" 2>/dev/null || true
+    ln -sfn /dev/null "$real_link" 2>/dev/null || true
+    ln -sfn /dev/null "$factory_link" 2>/dev/null || true
+    ln -sfn /dev/null "$both_link" 2>/dev/null || true
+
+    ux_print ""
+    ux_print "  ┌────────────────────────────────────────────────────────────────────┐"
+    ux_print "  │ Option 5 — Environment Table Selection                            │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 1) Real hardware themed env table                                 │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 2) Factory image based environment table                          │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 3) Both tables                                                     │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ Links (all point to /dev/null placeholders):                      │"
+    ux_print "  │   real   : $real_link"
+    ux_print "  │   factory: $factory_link"
+    ux_print "  │   both   : $both_link"
+    ux_print "  └────────────────────────────────────────────────────────────────────┘"
+
+    if [ -t 0 ] 2>/dev/null; then
+        ux_prompt input \
+            "Choose env table mode [1=real, 2=factory, 3=both]" \
+            "3"
+    else
+        input="3"
+        log_info "Non-interactive mode: defaulting option 5 env table mode to BOTH"
+    fi
+
+    case "$input" in
+        1|real|REAL|hardware|HARDWARE)
+            mode="real_hardware"
+            selected_link="$real_link"
+            ;;
+        2|factory|FACTORY|factory_image)
+            mode="factory_image"
+            selected_link="$factory_link"
+            ;;
+        3|both|BOTH|'')
+            mode="both"
+            selected_link="$both_link"
+            ;;
+        *)
+            mode="both"
+            selected_link="$both_link"
+            ;;
+    esac
+
+    _reg_set boot HOM_OPTION5_ENV_TABLE_MODE "$mode"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_REAL_LINK "$real_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_FACTORY_LINK "$factory_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_BOTH_LINK "$both_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_SELECTED_LINK "$selected_link"
+
+    ux_print "  ✓  Selected env table mode: $mode"
+    ux_print "     Active link: $selected_link"
+}
+
 _prompt_local_user_image() {
     # $1=boot_part, $2=codename, $3=build_id_lower
     # Echoes resolved path (or empty) on stdout.
@@ -1250,6 +1326,9 @@ run_boot_image_acquire() {
             ux_print "  No usable pre-placed or backup ${boot_part}.img found."
         fi
     fi
+
+    # Prompt exactly after boot-image detection output is shown.
+    _prompt_option5_env_table_mode
 
     # ── 3. Local user file (boot.img / init_boot.img / factory ZIP)
     #       or Google factory image download (Pixel devices) ──────
