@@ -690,14 +690,14 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
         name_raw = data[pos:pos + namesize]
         name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
         name_step = _align4(110 + namesize) - 110
-        if name_step < namesize or pos + name_step > len(data):
+        if pos + name_step > len(data):
             break
         pos += name_step
 
         if name == "TRAILER!!!":
             break
 
-        if filesize < 0 or pos + filesize > len(data):
+        if pos + filesize > len(data):
             break
         file_data = data[pos:pos + filesize]
         pos += _align4(filesize)
@@ -748,7 +748,7 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
         if name == "TRAILER!!!":
             break
 
-        if filesize < 0 or pos + filesize > len(data):
+        if pos + filesize > len(data):
             break
         file_data = data[pos:pos + filesize]
         pos += filesize

@@ -37,7 +37,8 @@ class UnpackImagesTests(unittest.TestCase):
             b"00000000",  # check
         ]
         header = b"".join(fields)
-        assert len(header) == 110
+        if len(header) != 110:
+            raise ValueError("invalid newc header length")
 
         def _pad4(buf: bytes) -> bytes:
             return buf + (b"\x00" * ((4 - (len(buf) % 4)) % 4))
