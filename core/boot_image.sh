@@ -652,7 +652,7 @@ _prompt_option5_env_table_mode() {
     #   HOM_OPTION5_ENV_TABLE_FACTORY_LINK
     #   HOM_OPTION5_ENV_TABLE_BOTH_LINK
     #   HOM_OPTION5_ENV_TABLE_SELECTED_LINK
-    local mode="both" input="" input_norm=""
+    local mode="both" input="" input_normalized=""
     local links_dir="$BOOT_WORK_DIR/env_table_links"
     local real_link="$links_dir/real_hardware_env_table.link"
     local factory_link="$links_dir/factory_image_env_table.link"
@@ -660,7 +660,7 @@ _prompt_option5_env_table_mode() {
     local selected_link="$both_link"
 
     if ! mkdir -p "$links_dir" 2>/dev/null; then
-        log_warn "Could not create env-table links directory: $links_dir"
+        log_warn "Could not create env-table links directory: $links_dir. Proceeding with default behavior."
     fi
     if ! ln -sfn /dev/null "$real_link" 2>/dev/null; then
         log_warn "Could not create /dev/null link: $real_link"
@@ -697,9 +697,9 @@ _prompt_option5_env_table_mode() {
         log_info "Non-interactive mode: defaulting option 5 env table mode to both"
     fi
 
-    input_norm=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
+    input_normalized=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
 
-    case "$input_norm" in
+    case "$input_normalized" in
         1|real|hardware)
             mode="real_hardware"
             selected_link="$real_link"
@@ -708,7 +708,7 @@ _prompt_option5_env_table_mode() {
             mode="factory_image"
             selected_link="$factory_link"
             ;;
-        3|both|'')
+        3|both)
             mode="both"
             selected_link="$both_link"
             ;;
