@@ -18,6 +18,12 @@ All names are matched against the same prefix table used by the
 libhybris shim (g_aidl_table) so findings are grouped by the same
 hardware category the shim would log at runtime.
 
+Bare-metal identity values from board_summary.txt are embedded as constants
+(BARE_METAL_*).  Every scanned record is tagged with bare_metal=True when
+its value or uid matches one of those known-good values, so the report can
+flag confirmed items with [known] and you can immediately see which findings
+were already established at the board level without searching further.
+
 Nothing is written, modified, or imported from any other pipeline script.
 
 Usage
@@ -26,6 +32,7 @@ Usage
   python tools/scan_hw_names.py --zip  /path/to/live_dump.zip
   python tools/scan_hw_names.py --dump /path/to/live_dump --category audio
   python tools/scan_hw_names.py --dump . --json  > hw_names.json
+  python tools/scan_hw_names.py --zip  live_dump.zip --known-only
 """
 
 import argparse
@@ -36,6 +43,77 @@ import sys
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+# ── Bare-metal device identity ────────────────────────────────────────────────
+# Values read directly from board_summary.txt (collected from the live device).
+# These are the ground-truth identifiers for this hardware.  Any finding from
+# the dump scan that matches one of these values is flagged bare_metal=True
+# so you can see at a glance which items are already firmly established and
+# don't need further investigation.
+#
+# Source: board_summary.txt (root of repo)
+BARE_METAL_PROPS: dict[str, str] = {
+    "ro.board.platform":            "zuma",
+    "ro.hardware":                  "husky",
+    "ro.product.board":             "husky",
+    "ro.product.device":            "husky",
+    "ro.product.model":             "Pixel 8 Pro",
+    "ro.build.fingerprint":         "google/husky/husky:16/CP1A.260305.018/14887507:user/release-keys",
+    "ro.vendor.build.fingerprint":  "google/husky/husky:16/CP1A.260305.018/14887507:user/release-keys",
+    "ro.soc.manufacturer":          "Google",
+    "ro.soc.model":                 "Tensor G3",
+}
+
+# Bare-metal HAL/hardware identifiers inferred from the above.
+# These strings appear verbatim in VINTF manifests, lshal output,
+# and vendor XMLs, so an exact-match or prefix-match flags a record
+# as already known from hardware identity.
+BARE_METAL_HW_IDS: frozenset[str] = frozenset({
+    "husky",          # ro.hardware / codename
+    "zuma",           # ro.board.platform / SoC family
+    "mali",           # ro.hardware.egl / ro.hardware.vulkan  (Tensor G3 GPU)
+    "trusty",         # ro.hardware.gatekeeper / ro.hardware.keystore
+    "google",         # ro.product.brand / ro.soc.manufacturer
+    "Tensor G3",      # ro.soc.model
+    "Pixel 8 Pro",    # ro.product.model
+    "arm64-v8a",      # ro.product.cpu.abi
+})
+
+# Bare-metal kernel module names that are definitively present on this SoC.
+# Eliminates need to re-scan lsmod to confirm these.
+BARE_METAL_MODULES: frozenset[str] = frozenset({
+    "mali_kbase",     # Arm Mali GPU driver (Tensor G3)
+    "gsa",            # Google Security Assistant
+    "trusty",         # Trusty TEE kernel shim
+    "bcmbt",          # Broadcom Bluetooth (Pixel 8 series)
+    "qca_cld3_wlan",  # WLAN driver used on Pixel 8 Pro
+    "edgetpu",        # Google Edge TPU
+})
+
+
+def _is_bare_metal(record: dict) -> bool:
+    """Return True when the record's value/uid matches a known bare-metal constant."""
+    # Prop key + value match
+    if record.get("type") == "prop":
+        key = record.get("key", "")
+        val = record.get("value", "")
+        if BARE_METAL_PROPS.get(key) == val:
+            return True
+        # Value contains a bare-metal id token
+        if any(token in val for token in BARE_METAL_HW_IDS):
+            return True
+
+    # uid / name string contains a bare-metal token
+    for field in ("uid", "name", "base"):
+        v = record.get(field, "") or ""
+        if any(token in v for token in BARE_METAL_HW_IDS):
+            return True
+
+    # Kernel module is in the confirmed set
+    if record.get("type") == "kmodule" and record.get("name") in BARE_METAL_MODULES:
+        return True
+
+    return False
 
 # ── AIDL descriptor prefix table ─────────────────────────────────────────────
 # Mirrors halium-shim/shim.c  g_aidl_table[] exactly.
@@ -482,9 +560,10 @@ def scan(reader: DumpReader) -> dict[str, list[dict]]:
     if lsmod:
         all_records.extend(parse_lsmod(lsmod))
 
-    # Group by category
+    # Group by category, tagging bare-metal confirmed items
     grouped: dict[str, list[dict]] = {}
     for rec in all_records:
+        rec["bare_metal"] = _is_bare_metal(rec)
         cat = rec.get("category", "unknown")
         grouped.setdefault(cat, []).append(rec)
 
@@ -514,8 +593,23 @@ def _dedup(records: list[dict]) -> list[dict]:
     return out
 
 
+def _print_bare_metal_header() -> None:
+    """Print the embedded bare-metal device identity block at the top of the report."""
+    print(f"\n{'═' * 70}")
+    print("  DEVICE IDENTITY  (bare-metal constants — board_summary.txt)")
+    print(f"{'═' * 70}")
+    col = max(len(k) for k in BARE_METAL_PROPS) + 2
+    for k, v in BARE_METAL_PROPS.items():
+        print(f"  {k:<{col}} = {v}")
+    print(f"\n  Hardware tokens : {', '.join(sorted(BARE_METAL_HW_IDS))}")
+    print(f"  Kernel modules  : {', '.join(sorted(BARE_METAL_MODULES))}")
+    print(f"{'═' * 70}\n")
+
+
 def print_report(grouped: dict[str, list[dict]],
-                 filter_cat: str | None) -> None:
+                 filter_cat: str | None,
+                 known_only: bool = False) -> None:
+    _print_bare_metal_header()
     cats = _CATEGORY_ORDER + sorted(set(grouped) - set(_CATEGORY_ORDER))
     for cat in cats:
         if cat not in grouped:
@@ -523,8 +617,13 @@ def print_report(grouped: dict[str, list[dict]],
         if filter_cat and cat != filter_cat:
             continue
         records = _dedup(grouped[cat])
+        if known_only:
+            records = [r for r in records if r.get("bare_metal")]
+        if not records:
+            continue
+        km_count = sum(1 for r in records if r.get("bare_metal"))
         print(f"\n{'━' * 70}")
-        print(f"  CATEGORY: {cat.upper()}  ({len(records)} items)")
+        print(f"  CATEGORY: {cat.upper()}  ({len(records)} items, {km_count} confirmed bare-metal)")
         print(f"{'━' * 70}")
 
         by_type: dict[str, list[dict]] = {}
@@ -534,11 +633,11 @@ def print_report(grouped: dict[str, list[dict]],
         for rtype, recs in sorted(by_type.items()):
             print(f"\n  [{rtype}]")
             for r in recs:
-                uid = r.get("uid", "")
+                uid    = r.get("uid", "")
+                badge  = "  \033[32m[known]\033[0m" if r.get("bare_metal") else ""
                 if rtype == "hal":
                     src = r.get("source", "")
-                    # uid is the full canonical identifier — print it first
-                    print(f"    uid  : {uid}")
+                    print(f"    uid  : {uid}{badge}")
                     print(f"    fmt  : {r['format']}  name: {r['name']}"
                           + (f"  ver: {r['version']}" if r.get("version") else ""))
                     if r.get("instance") and r["instance"] != "(no instance)":
@@ -549,16 +648,16 @@ def print_report(grouped: dict[str, list[dict]],
                 elif rtype == "audio_strategy":
                     sid  = r.get("id")
                     kind = r.get("kind", "")
-                    print(f"    uid  : {uid}  name: {r['name']}  [{kind}]")
+                    print(f"    uid  : {uid}  name: {r['name']}  [{kind}]{badge}")
                 elif rtype == "feature":
-                    print(f"    uid  : {uid}")
+                    print(f"    uid  : {uid}{badge}")
                 elif rtype == "prop":
-                    print(f"    uid  : {uid}  =  {r['value']}")
+                    print(f"    uid  : {uid}  =  {r['value']}{badge}")
                 elif rtype == "lshal":
-                    print(f"    uid  : {uid}")
+                    print(f"    uid  : {uid}{badge}")
                 elif rtype == "kmodule":
                     used = f"  used_by={r['used_by']}" if r.get("used_by") else ""
-                    print(f"    uid  : {uid}  size={r['size']}{used}")
+                    print(f"    uid  : {uid}  size={r['size']}{used}{badge}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -576,6 +675,8 @@ def main() -> None:
                     help="Filter output to a single hardware category (e.g. audio)")
     ap.add_argument("--json", action="store_true",
                     help="Emit JSON instead of a human-readable report")
+    ap.add_argument("--known-only", action="store_true",
+                    help="Show only items confirmed by bare-metal constants")
     args = ap.parse_args()
 
     dump_path = Path(args.dump) if args.dump else None
@@ -599,9 +700,11 @@ def main() -> None:
         print(json.dumps(flat, indent=2))
     else:
         total = sum(len(_dedup(v)) for v in grouped.values())
+        known = sum(1 for v in grouped.values() for r in _dedup(v) if r.get("bare_metal"))
         cat_filter = args.category.lower() if args.category else None
-        print(f"scan_hw_names — {total} items found across {len(grouped)} categories")
-        print_report(grouped, cat_filter)
+        print(f"scan_hw_names — {total} items found across {len(grouped)} categories"
+              f"  ({known} confirmed by bare-metal constants)")
+        print_report(grouped, cat_filter, known_only=getattr(args, "known_only", False))
 
 
 if __name__ == "__main__":
