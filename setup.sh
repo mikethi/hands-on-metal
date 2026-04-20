@@ -26,17 +26,12 @@ FORCE_REPO_SYNC=true
 usage() {
     echo "Usage: bash setup.sh [--no-sync] [--help]"
     echo "  (default)         Fetch + fast-forward this repo before setup continues."
-    echo "  --update, --sync  Explicitly enable repo sync (same as default)."
     echo "  --no-sync         Skip repo sync and continue with current checkout."
     echo "  --help            Show this help and exit."
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --update|--sync)
-            FORCE_REPO_SYNC=true
-            shift
-            ;;
         --no-sync)
             FORCE_REPO_SYNC=false
             shift
