@@ -154,7 +154,7 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
         if [ -n "$recovered_boot_img" ] && [ -f "$recovered_boot_img" ]; then
             boot_img="$recovered_boot_img"
             _reg_set boot HOM_BOOT_IMG_PATH "$boot_img"
-            ux_print "  ℹ  HOM_BOOT_IMG_PATH was missing/invalid — using discovered image:"
+            ux_print "  ℹ  HOM_BOOT_IMG_PATH was missing/invalid -- using discovered image:"
             ux_print "     $boot_img"
             log_info "Recovered HOM_BOOT_IMG_PATH via fallback discovery: $boot_img"
         else
