@@ -652,28 +652,38 @@ _prompt_option5_env_table_mode() {
     #   HOM_OPTION5_ENV_TABLE_FACTORY_LINK
     #   HOM_OPTION5_ENV_TABLE_BOTH_LINK
     #   HOM_OPTION5_ENV_TABLE_SELECTED_LINK
-    local mode="both" input="" input_normalized="" links_dir_ok=1
+    local mode="both"
+    local input=""
+    local input_normalized=""
+    local links_dir_ok=1
     local links_dir="$BOOT_WORK_DIR/env_table_links"
     local real_link="$links_dir/real_hardware_env_table.link"
     local factory_link="$links_dir/factory_image_env_table.link"
     local both_link="$links_dir/both_env_tables.link"
     local selected_link="$both_link"
+    local real_link_display="" factory_link_display="" both_link_display=""
 
     if ! mkdir -p "$links_dir" 2>/dev/null; then
         log_warn "Could not create env-table links directory: $links_dir. Link placeholders may be unavailable."
         links_dir_ok=0
     fi
     if [ "$links_dir_ok" -eq 1 ]; then
-        if ! ln -sfn /dev/null "$real_link" 2>/dev/null; then
-            log_warn "Could not create /dev/null link: $real_link"
-        fi
-        if ! ln -sfn /dev/null "$factory_link" 2>/dev/null; then
-            log_warn "Could not create /dev/null link: $factory_link"
-        fi
-        if ! ln -sfn /dev/null "$both_link" 2>/dev/null; then
-            log_warn "Could not create /dev/null link: $both_link"
-        fi
+        local _entry _label _path
+        for _entry in \
+            "real:$real_link" \
+            "factory:$factory_link" \
+            "both:$both_link"; do
+            _label="${_entry%%:*}"
+            _path="${_entry#*:}"
+            if ! ln -sfn /dev/null "$_path" 2>/dev/null; then
+                log_warn "Could not create /dev/null link ($_label): $_path"
+            fi
+        done
     fi
+
+    real_link_display=$(printf '%s' "$real_link" | tr -d '\r\n')
+    factory_link_display=$(printf '%s' "$factory_link" | tr -d '\r\n')
+    both_link_display=$(printf '%s' "$both_link" | tr -d '\r\n')
 
     ux_print ""
     ux_print "  ┌────────────────────────────────────────────────────────────────────┐"
@@ -687,9 +697,9 @@ _prompt_option5_env_table_mode() {
     ux_print "  ├────────────────────────────────────────────────────────────────────┤"
     ux_print "  │ Links: see below (placeholder links)                              │"
     ux_print "  └────────────────────────────────────────────────────────────────────┘"
-    ux_print "    real   : $real_link"
-    ux_print "    factory: $factory_link"
-    ux_print "    both   : $both_link"
+    ux_print "    real   : $real_link_display"
+    ux_print "    factory: $factory_link_display"
+    ux_print "    both   : $both_link_display"
 
     if [ -t 0 ] 2>/dev/null; then
         ux_prompt input \
