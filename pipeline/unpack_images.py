@@ -384,7 +384,7 @@ def _try_lz4_block(data: bytes) -> bytes | None:
         result = _lz4_block.decompress(data)
     except Exception:
         return None
-    if result[:6] in (b"070701", b"070702", b"070707"):
+    if result.startswith((b"070701", b"070702", b"070707")):
         return result
     return None
 
