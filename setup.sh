@@ -56,14 +56,14 @@ done
 _hom_sync_repo() {
     local repo_dir="${1:-.}"
     echo "Syncing repository in '$repo_dir'..."
-    git -C "$repo_dir" fetch --all --tags --prune || {
+    if ! git -C "$repo_dir" fetch --all --tags --prune; then
         echo "ERROR: git fetch failed in '$repo_dir'." >&2
         return 1
-    }
-    git -C "$repo_dir" pull --ff-only || {
+    fi
+    if ! git -C "$repo_dir" pull --ff-only; then
         echo "ERROR: git pull --ff-only failed in '$repo_dir'." >&2
         return 1
-    }
+    fi
 }
 
 # ── Helper: auto-install a package if the command is missing ──
