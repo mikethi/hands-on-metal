@@ -1206,7 +1206,7 @@ def _process_ramdisk_blob(
     *label* is used in DB source paths and log messages.
     *depth* guards against infinite recursion when extracted files themselves
     contain nested boot images (e.g. vendor_boot inside an OTA ramdisk).
-    The recursion limit is 4 levels — enough for any realistic nesting.
+    The recursion limit is 10 levels — enough for any realistic nesting.
 
     Nested ``.img`` files found in the extracted CPIO are automatically
     unsparsed (if needed) and parsed as boot images so every layer is
@@ -1254,7 +1254,7 @@ def _process_ramdisk_blob(
     # ── Recursively parse any .img files found in the ramdisk ────────────────
     # Many vendor ramdisks embed sub-images (init_boot.img, recovery.img, …).
     # We parse up to 4 levels deep so nothing is silently skipped.
-    if depth < 4:
+    if depth < 10:
         for fname in list(files):
             if not fname.lower().endswith(".img"):
                 continue
