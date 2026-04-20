@@ -90,6 +90,21 @@ class UnpackImagesTests(unittest.TestCase):
             out = unpack_images._try_lz4(fake_input)
         self.assertEqual(out, b"")
 
+    def test_try_lz4_block_decodes_cpio(self) -> None:
+        fake_input = b"raw-lz4-block-data"
+        fake_block = mock.Mock()
+        fake_block.decompress.return_value = b"070701cpio"
+        with mock.patch.object(unpack_images, "_HAS_LZ4_BLOCK", True), \
+             mock.patch.object(unpack_images, "_lz4_block", fake_block, create=True):
+            out = unpack_images._try_lz4_block(fake_input)
+        self.assertEqual(out, b"070701cpio")
+
+    def test_try_lz4_block_returns_none_without_module(self) -> None:
+        fake_input = b"raw-lz4-block-data"
+        with mock.patch.object(unpack_images, "_HAS_LZ4_BLOCK", False):
+            out = unpack_images._try_lz4_block(fake_input)
+        self.assertIsNone(out)
+
 
 if __name__ == "__main__":
     unittest.main()

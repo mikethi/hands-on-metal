@@ -71,6 +71,12 @@ except ImportError:
     _HAS_LZ4 = False
 
 try:
+    import lz4.block as _lz4_block
+    _HAS_LZ4_BLOCK = True
+except ImportError:
+    _HAS_LZ4_BLOCK = False
+
+try:
     import zstandard as _zstd
     _HAS_ZSTD = True
 except ImportError:
@@ -370,6 +376,19 @@ def _try_lz4(data: bytes) -> bytes | None:
         return None
 
 
+def _try_lz4_block(data: bytes) -> bytes | None:
+    """Try decoding raw LZ4 block streams (no frame magic)."""
+    if not _HAS_LZ4_BLOCK:
+        return None
+    try:
+        result = _lz4_block.decompress(data)
+    except Exception:
+        return None
+    if result.startswith((b"070701", b"070702", b"070707")):
+        return result
+    return None
+
+
 def _lz4_stdin_cli_commands() -> tuple[list[str], ...]:
     """Candidate commands for decoding LZ4 data from stdin."""
     return (
@@ -466,7 +485,7 @@ def _try_bz2(data: bytes) -> bytes | None:
 
 def decompress_ramdisk(data: bytes) -> bytes | None:
     """Try all known compression formats; return raw cpio bytes or None."""
-    for fn in (_try_gzip, _try_lz4, _try_lzma, _try_zstd, _try_bz2):
+    for fn in (_try_gzip, _try_lz4, _try_lz4_block, _try_lzma, _try_zstd, _try_bz2):
         result = fn(data)
         if result is not None:
             return result

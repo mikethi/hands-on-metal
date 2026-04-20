@@ -758,6 +758,48 @@ _is_google_device_supported() {
 # call from inside a function whose stdout is captured via $(...).
 #
 # Usage: _extract_all_partitions_from_inner_zip <inner_zip_path>
+_find_zip_member_by_basename() {
+    # $1 = zip path
+    # $2 = basename to find (e.g., boot.img)
+    local zip_path="$1"
+    local base_name="$2"
+    [ -f "$zip_path" ] || return 1
+    _has_cmd unzip || return 1
+
+    local member
+    member=$(
+        unzip -Z1 "$zip_path" 2>/dev/null \
+            | awk -v n="$base_name" '
+                {
+                    m=$0
+                    sub(/^.*\//, "", m)
+                    if (m == n) {
+                        print $0
+                        exit
+                    }
+                }'
+    )
+    [ -n "$member" ] || return 1
+    printf '%s\n' "$member"
+    return 0
+}
+
+_extract_zip_member_by_basename() {
+    # $1 = zip path
+    # $2 = basename to extract (e.g., vendor_boot.img)
+    # $3 = output directory
+    local zip_path="$1"
+    local base_name="$2"
+    local out_dir="$3"
+    local member=""
+
+    member=$(_find_zip_member_by_basename "$zip_path" "$base_name" || true)
+    [ -n "$member" ] || return 1
+    mkdir -p "$out_dir" 2>/dev/null || return 1
+    unzip -joq "$zip_path" "$member" -d "$out_dir" 2>/dev/null || return 1
+    [ -s "$out_dir/$base_name" ]
+}
+
 _extract_all_partitions_from_inner_zip() {
     # $1 = path to inner image-*.zip
     # $2 = optional output directory for extracted partition images
@@ -773,28 +815,14 @@ _extract_all_partitions_from_inner_zip() {
     # entries are tolerated silently.
     local candidates="boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img vbmeta_system.img vbmeta_vendor.img recovery.img"
 
-    # Listing once is cheaper than probing each name with unzip.
-    local listing
-    listing=$(unzip -l "$inner_zip_path" 2>/dev/null || true)
-    [ -n "$listing" ] || return 1
-
     local extracted_count=0
     local extracted_names=""
     local img
     for img in $candidates; do
-        # Match the image name as a whole token in the listing
-        # (avoids false hits like "boot.img.lz4" when only boot.img
-        # was asked for).
-        if printf '%s\n' "$listing" | grep -Eq "[[:space:]]${img}\$"; then
-            if unzip -joq "$inner_zip_path" "$img" \
-                    -d "$part_dir" 2>/dev/null \
-                    && [ -s "$part_dir/$img" ]; then
-                extracted_count=$((extracted_count + 1))
-                extracted_names="$extracted_names $img"
-                log_info "Extracted partition image: $img -> $part_dir/$img"
-            else
-                log_warn "Failed to extract $img from inner ZIP"
-            fi
+        if _extract_zip_member_by_basename "$inner_zip_path" "$img" "$part_dir"; then
+            extracted_count=$((extracted_count + 1))
+            extracted_names="$extracted_names $img"
+            log_info "Extracted partition image: $img -> $part_dir/$img"
         fi
     done
 
@@ -938,8 +966,7 @@ _download_factory_boot_image() {
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
     local partitions_dir="$OPTION5_PARTITIONS_DIR"
-    if unzip -joq "$inner_zip_path" "${boot_part}.img" \
-            -d "$extract_dir" 2>/dev/null; then
+    if _extract_zip_member_by_basename "$inner_zip_path" "${boot_part}.img" "$extract_dir"; then
         local target_img="$extract_dir/${boot_part}.img"
         if [ -f "$target_img" ] && [ -s "$target_img" ]; then
             ux_print "  ✓  Extracted ${boot_part}.img from factory image"
@@ -969,8 +996,7 @@ _download_factory_boot_image() {
         ux_print "  ⚠  init_boot.img not present in this factory image."
         ux_print "     This firmware may pre-date Android 13 / API 33."
         ux_print "     Falling back to boot.img."
-        if unzip -joq "$inner_zip_path" "boot.img" \
-                -d "$extract_dir" 2>/dev/null; then
+        if _extract_zip_member_by_basename "$inner_zip_path" "boot.img" "$extract_dir"; then
             local fallback_img="$extract_dir/boot.img"
             if [ -f "$fallback_img" ] && [ -s "$fallback_img" ]; then
                 ux_print "  ✓  Extracted boot.img as fallback"
