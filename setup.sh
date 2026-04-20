@@ -57,6 +57,8 @@ _hom_sync_repo() {
     fi
     if ! git -C "$repo_dir" pull --ff-only; then
         echo "ERROR: git pull --ff-only failed in '$repo_dir'." >&2
+        echo "       Check for local/uncommitted changes or branch divergence." >&2
+        echo "       Run: git -C '$repo_dir' status" >&2
         return 1
     fi
 }
