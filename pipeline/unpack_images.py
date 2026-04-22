@@ -37,10 +37,12 @@ Image discovery order (first match wins per path):
      option 5 — the canonical acquired image).
   2. ~/hands-on-metal/boot_work/partitions/ and ~/hands-on-metal/boot_work/
      (option-5 factory-ZIP extraction output, override via HOM_BOOT_WORK_DIR).
-  3. Fallback system search inside the --dump directory:
+  3. Recursive extraction-first search inside the --dump directory:
        <dump_dir>/partitions/   (Mode B recovery images)
        <dump_dir>/boot_images/  (explicit location)
        <dump_dir>/              (fallback)
+     All nested ZIP/TAR archives are expanded first and then searched
+     recursively for image payloads.
 
 Compressed backups (.win.gz, .win.lz4, .img.lz4) found in the fallback
 search are decompressed on the fly into boot_work/ so their resolved paths
@@ -48,12 +50,16 @@ are known to all subsequent pipeline steps.
 """
 
 import argparse
+import hashlib
 import io
 import os
+import re
 import sqlite3
 import struct
 import subprocess
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -63,6 +69,12 @@ try:
     _HAS_LZ4 = True
 except ImportError:
     _HAS_LZ4 = False
+
+try:
+    import lz4.block as _lz4_block
+    _HAS_LZ4_BLOCK = True
+except ImportError:
+    _HAS_LZ4_BLOCK = False
 
 try:
     import zstandard as _zstd
@@ -364,21 +376,78 @@ def _try_lz4(data: bytes) -> bytes | None:
         return None
 
 
+def _try_lz4_block(data: bytes) -> bytes | None:
+    """Try decoding raw LZ4 block streams (no frame magic)."""
+    if not _HAS_LZ4_BLOCK:
+        return None
+    try:
+        result = _lz4_block.decompress(data)
+    except Exception:
+        return None
+    if result.startswith((b"070701", b"070702", b"070707")):
+        return result
+    return None
+
+
+def _lz4_stdin_cli_commands() -> tuple[list[str], ...]:
+    """Candidate commands for decoding LZ4 data from stdin."""
+    return (
+        ["lz4", "-dc", "-"],
+        ["lz4", "-l", "-dc", "-"],
+        ["lz4cat"],
+        ["unlz4", "-c"],
+    )
+
+
+def _lz4_file_cli_commands(src: Path) -> tuple[list[str], ...]:
+    """Candidate commands for decoding an LZ4-compressed file."""
+    src_str = str(src)
+    return (
+        ["lz4", "-dc", "--", src_str],
+        ["lz4", "-l", "-dc", "--", src_str],
+        ["lz4cat", "--", src_str],
+        ["unlz4", "-c", "--", src_str],
+    )
+
+
 def _try_lz4_cli(data: bytes) -> bytes | None:
     """Try LZ4 decompression via external lz4 CLI using stdin/stdout."""
-    try:
-        result = subprocess.run(
-            ["lz4", "-dc", "-"],
-            input=data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=_DECOMPRESS_TIMEOUT,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout
+    for cmd in _lz4_stdin_cli_commands():
+        try:
+            result = subprocess.run(
+                cmd,
+                input=data,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_DECOMPRESS_TIMEOUT,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        if result.returncode == 0:
+            return result.stdout
+    return None
+
+
+def _try_lz4_cli_file(src: Path, out_path: Path) -> tuple[bool, bytes]:
+    """Try LZ4 decompression of *src* via external CLI variants into *out_path*."""
+    last_stderr = b""
+    for cmd in _lz4_file_cli_commands(src):
+        try:
+            with open(str(out_path), "wb") as f_out:
+                result = subprocess.run(
+                    cmd,
+                    stdout=f_out,
+                    stderr=subprocess.PIPE,
+                    timeout=_DECOMPRESS_TIMEOUT,
+                )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            out_path.unlink(missing_ok=True)
+            continue
+        if result.returncode == 0 and out_path.stat().st_size > 0:
+            return True, b""
+        last_stderr = result.stderr
+        out_path.unlink(missing_ok=True)
+    return False, last_stderr
 
 
 def _try_lzma(data: bytes) -> bytes | None:
@@ -414,15 +483,63 @@ def _try_bz2(data: bytes) -> bytes | None:
         return None
 
 
-def decompress_ramdisk(data: bytes) -> bytes | None:
-    """Try all known compression formats; return raw cpio bytes or None."""
-    for fn in (_try_gzip, _try_lz4, _try_lzma, _try_zstd, _try_bz2):
+_RAMDISK_MAGIC_MARKERS: tuple[bytes, ...] = (
+    b"\x1f\x8b",             # gzip
+    b"\x04\x22\x4d\x18",     # lz4 frame
+    b"\x02\x21\x4c\x18",     # lz4 legacy frame
+    b"\xfd7zXZ\x00",         # xz
+    b"\x28\xb5\x2f\xfd",     # zstd
+    b"BZ",                   # bzip2
+)
+_CPIO_MAGICS: tuple[bytes, ...] = (b"070701", b"070702", b"070707")
+_RAMDISK_MAGIC_MARKERS = _RAMDISK_MAGIC_MARKERS + _CPIO_MAGICS
+
+
+def _decompress_ramdisk_known(data: bytes) -> bytes | None:
+    """Decode one ramdisk blob if it starts at offset 0."""
+    for fn in (_try_gzip, _try_lz4, _try_lz4_block, _try_lzma, _try_zstd, _try_bz2):
         result = fn(data)
         if result is not None:
             return result
-    # Already uncompressed cpio?
-    if data[:6] in (b"070701", b"070702", b"070707"):
+    if data[:6] in _CPIO_MAGICS:
         return data
+    return None
+
+
+def _candidate_ramdisk_offsets(data: bytes, max_scan: int = 512 * 1024) -> list[int]:
+    """Return unique offsets where a known ramdisk/compression marker appears."""
+    scan_len = min(len(data), max_scan)
+    if scan_len <= 0:
+        return [0]
+
+    offsets: set[int] = {0}
+    head = data[:scan_len]
+    for marker in _RAMDISK_MAGIC_MARKERS:
+        start = 0
+        while True:
+            idx = head.find(marker, start)
+            if idx < 0:
+                break
+            offsets.add(idx)
+            start = idx + 1
+    return sorted(offsets)
+
+
+def decompress_ramdisk(data: bytes) -> bytes | None:
+    """Try all known compression formats; return raw cpio bytes or None."""
+    # Most images place ramdisk payload at offset 0; try this fast path first.
+    direct = _decompress_ramdisk_known(data)
+    if direct is not None:
+        return direct
+
+    # Some partition dumps include small prefix bytes before the actual ramdisk
+    # payload. Scan near the head and retry from candidate offsets.
+    for off in _candidate_ramdisk_offsets(data):
+        if off == 0:
+            continue
+        result = _decompress_ramdisk_known(data[off:])
+        if result is not None:
+            return result
     return None
 
 
@@ -436,7 +553,82 @@ TARGET_NAMES = {
     "prop.default", "build.prop",
 }
 TARGET_PREFIXES = ("init.", "ueventd.", "fstab.", "lib/modules/")
-TARGET_SUFFIXES = (".rc", ".prop", ".fstab", ".ko", ".so")
+TARGET_SUFFIXES = (".rc", ".prop", ".fstab", ".ko", ".so", ".pb")
+
+# ── .pb (protobuf) bare-metal value extractor ────────────────────────────────
+# Maps filename substrings → sysconfig category key prefix.
+_PB_CATEGORY: list[tuple[str, str]] = [
+    ("pwrctrl",   "pwrctrl"),
+    ("power",     "pwrctrl"),
+    ("pmu",       "pwrctrl"),
+    ("pin",       "pins"),
+    ("gpio",      "pins"),
+    ("reg",       "reg"),
+    ("regulator", "reg"),
+    ("device",    "deviceinfo"),
+    ("hardware",  "deviceinfo"),
+    ("board",     "deviceinfo"),
+]
+
+_PB_HEX_RE    = re.compile(r"0x[0-9a-fA-F]{4,}")
+_PB_PIN_RE    = re.compile(r"\bgp[phabn]\d+[-_]?\d*\b|\bgpio\d+\b", re.IGNORECASE)
+_PB_PWR_RE    = re.compile(r"\bpd_\w+\b|\bpwrctrl\b|\bpmic\w*\b", re.IGNORECASE)
+_PB_COMPAT_RE = re.compile(r"\b[\w]{2,},[\w-]+\b")
+
+
+def _ingest_pb_file(pb_path: Path, src_path: str, run_id: int,
+                    cur: sqlite3.Cursor) -> None:
+    """Extract bare-metal values from a binary .pb protobuf file.
+
+    Reads the raw bytes, recovers printable ASCII strings ≥ 4 chars,
+    then filters for hardware-relevant patterns (register addresses,
+    pin identifiers, power domains, compatible strings) and stores up
+    to 64 results per file in sysconfig_entry so that export_postmarketos
+    and report.py can surface them.
+    """
+    try:
+        raw = pb_path.read_bytes()
+    except OSError:
+        return
+
+    stem = pb_path.stem.lower()
+    category = "ramdisk_pb"
+    for frag, cat in _PB_CATEGORY:
+        if frag in stem:
+            category = cat
+            break
+
+    # Recover printable ASCII strings (min 4 chars) from binary blob
+    strings: list[str] = []
+    buf: list[str] = []
+    for byte in raw:
+        ch = chr(byte)
+        if 0x20 <= byte < 0x7F:  # printable ASCII
+            buf.append(ch)
+        else:
+            if len(buf) >= 4:
+                strings.append("".join(buf))
+            buf.clear()
+    if len(buf) >= 4:
+        strings.append("".join(buf))
+
+    # Keep only hardware-relevant strings
+    hw_strings: list[str] = []
+    for s in strings:
+        if (_PB_HEX_RE.search(s) or _PB_PIN_RE.search(s)
+                or _PB_PWR_RE.search(s) or _PB_COMPAT_RE.search(s)):
+            hw_strings.append(s)
+
+    for i, val in enumerate(hw_strings[:64]):
+        key = f"pb.{category}.{pb_path.name}.{i}"
+        try:
+            cur.execute(
+                """INSERT OR IGNORE INTO sysconfig_entry
+                   (run_id, source, key, value) VALUES (?,?,?,?)""",
+                (run_id, src_path, key, val[:512]),
+            )
+        except sqlite3.Error:
+            pass
 
 
 def _want_file(name: str) -> bool:
@@ -698,13 +890,35 @@ def _get_env_registry_val(key: str) -> str:
             rest = line[len(key) + 1:]          # everything after '='
             if rest.startswith('"'):
                 parts = rest.split('"', 2)
-                if len(parts) >= 2:
-                    return parts[1]             # value between first pair of "
-                return ""                       # malformed line — no closing quote
+                return parts[1] if len(parts) >= 2 else ""
             return rest.split()[0]              # unquoted value (edge case)
     except OSError:
         pass
     return ""
+
+
+def _set_env_registry_val(key: str, value: str,
+                          category: str = "unpack") -> None:
+    """Write *key*=*value* to ~/hands-on-metal/env_registry.sh.
+
+    Creates the registry file if it does not yet exist.  Any existing line
+    for the same key is replaced so the file stays idempotent across runs.
+    The format matches core/*'s _reg_set() shell helper:
+        KEY="VALUE"  # cat:<category>
+    """
+    reg = Path.home() / "hands-on-metal" / "env_registry.sh"
+    try:
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        existing: list[str] = []
+        if reg.exists():
+            existing = reg.read_text(errors="replace").splitlines()
+        # Drop any previous line for this key.
+        filtered = [ln for ln in existing if not ln.startswith(key + "=")]
+        filtered.append(f'{key}="{value}"  # cat:{category}')
+        reg.write_text("\n".join(filtered) + "\n")
+    except OSError as exc:
+        print(f"  warn: could not write {key} to env_registry: {exc}",
+              file=sys.stderr)
 
 
 def _decompress_image(src: Path, dest_dir: Path) -> Optional[Path]:
@@ -772,25 +986,18 @@ def _decompress_image(src: Path, dest_dir: Path) -> Optional[Path]:
                 out_path.unlink(missing_ok=True)
 
         # CLI fallback (lz4 tool from Termux / apt).
-        try:
-            with open(str(out_path), "wb") as f_out:
-                result = subprocess.run(
-                    ["lz4", "-dc", "--", str(src)],
-                    stdout=f_out, stderr=subprocess.PIPE,
-                    timeout=_DECOMPRESS_TIMEOUT,
-                )
-            if result.returncode == 0 and out_path.stat().st_size > 0:
-                return out_path
+        ok, err = _try_lz4_cli_file(src, out_path)
+        if ok:
+            return out_path
+        if err:
             print(
                 "    ↳ lz4 CLI failed: "
-                + result.stderr.decode(errors="replace").strip(),
+                + err.decode(errors="replace").strip(),
                 file=sys.stderr,
             )
-            out_path.unlink(missing_ok=True)
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-            print(f"    ↳ lz4 tool unavailable or timed out: {exc}",
+        else:
+            print("    ↳ lz4 tool unavailable or timed out",
                   file=sys.stderr)
-            out_path.unlink(missing_ok=True)
         return None
 
     except OSError as exc:
@@ -853,6 +1060,21 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 
     print(f"    ↳ boot image v{img.version}, ramdisk={len(img.ramdisk_data)} bytes")
 
+    # Store bare-metal boot image values: kernel cmdline and page size
+    for sc_key, sc_val in (
+        ("boot.pagesize", str(img.page_size)),
+        ("boot.cmdline",  img.cmdline),
+    ):
+        if sc_val and sc_val != "0":
+            try:
+                cur.execute(
+                    """INSERT OR IGNORE INTO sysconfig_entry
+                       (run_id, source, key, value) VALUES (?,?,?,?)""",
+                    (run_id, f"image:{image_rel}", sc_key, sc_val),
+                )
+            except sqlite3.Error:
+                pass
+
     if not img.ramdisk_data:
         result["status"] = "no_ramdisk"
         return result
@@ -877,9 +1099,10 @@ def process_image(img_path: Path, dump: Path, run_id: int,
     result["ramdisk_files"] = files
     print(f"    ↳ extracted {len(files)} relevant files to {out_dir.relative_to(dump)}/")
 
-    # Parse fstab files found in the ramdisk
+    # Parse fstab files and ingest .pb files found in the ramdisk
     for fname in files:
-        if "fstab" in fname.lower():
+        fname_lower = fname.lower()
+        if "fstab" in fname_lower:
             fpath = out_dir / fname.lstrip("/")
             if fpath.exists():
                 text = fpath.read_text(errors="replace")
@@ -887,6 +1110,10 @@ def process_image(img_path: Path, dump: Path, run_id: int,
                                 run_id, cur)
                 if n:
                     print(f"      fstab {fname}: {n} entries")
+        elif fname_lower.endswith(".pb"):
+            fpath = out_dir / fname.lstrip("/")
+            if fpath.exists():
+                _ingest_pb_file(fpath, f"ramdisk:{image_rel}/{fname}", run_id, cur)
 
     # Register extracted files in collected_file
     for fname in files:
@@ -920,6 +1147,162 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 IMAGE_NAMES = ("boot.img", "vendor_boot.img", "recovery.img",
                "init_boot.img")
 
+_ARCHIVE_SUFFIXES = (
+    ".zip",
+    ".tar",
+    ".tgz",
+    ".tar.gz",
+    ".tbz2",
+    ".tar.bz2",
+    ".txz",
+    ".tar.xz",
+)
+_TAR_SUFFIXES = tuple(sfx for sfx in _ARCHIVE_SUFFIXES if sfx != ".zip")
+
+
+def _is_archive_file(path: Path) -> bool:
+    name = path.name.lower()
+    return any(name.endswith(sfx) for sfx in _ARCHIVE_SUFFIXES)
+
+
+def _is_tar_file(path: Path) -> bool:
+    name = path.name.lower()
+    return any(name.endswith(sfx) for sfx in _TAR_SUFFIXES)
+
+
+def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
+    out_resolved = out_dir.resolve()
+    try:
+        with zipfile.ZipFile(src, "r") as zf:
+            members = [m for m in zf.infolist() if not m.is_dir()]
+            if not members:
+                return False
+            for member in members:
+                if member.create_system == 3:  # Unix
+                    mode = (member.external_attr >> 16) & 0xFFFF
+                    # ZIP external_attr stores Unix mode bits in the upper
+                    # 16 bits. 0o170000 = S_IFMT (file type mask);
+                    # 0o120000 = S_IFLNK (symlink file type).
+                    if (mode & 0o170000) == 0o120000:
+                        continue
+                rel = Path(member.filename)
+                if rel.is_absolute() or ".." in rel.parts:
+                    continue
+                target = out_dir / rel
+                try:
+                    target.resolve().relative_to(out_resolved)
+                except ValueError:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member, "r") as f_in, open(target, "wb") as f_out:
+                    while True:
+                        chunk = f_in.read(1 << 20)
+                        if not chunk:
+                            break
+                        f_out.write(chunk)
+        return True
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def _safe_extract_tar(src: Path, out_dir: Path) -> bool:
+    out_resolved = out_dir.resolve()
+    try:
+        with tarfile.open(src, "r:*") as tf:
+            members = [m for m in tf.getmembers() if m.isfile()]
+            if not members:
+                return False
+            for member in members:
+                rel = Path(member.name)
+                if rel.is_absolute() or ".." in rel.parts:
+                    continue
+                target = out_dir / rel
+                try:
+                    target.resolve().relative_to(out_resolved)
+                except ValueError:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                f_in = tf.extractfile(member)
+                # Defensive guard for malformed archives despite m.isfile().
+                if f_in is None:
+                    continue
+                with f_in, open(target, "wb") as f_out:
+                    while True:
+                        chunk = f_in.read(1 << 20)
+                        if not chunk:
+                            break
+                        f_out.write(chunk)
+        return True
+    except (OSError, tarfile.TarError):
+        return False
+
+
+def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
+    """Recursively extract archives under *roots* into *cache_root*.
+
+    Returned list preserves search order and contains both original roots and
+    all extracted sub-roots so callers can recursively search nested content.
+    """
+    ordered_roots: list[Path] = []
+    seen_roots: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        key = str(root.resolve())
+        if key in seen_roots:
+            continue
+        seen_roots.add(key)
+        ordered_roots.append(root)
+
+    try:
+        cache_root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return ordered_roots
+
+    seen_archives: set[str] = set()
+    idx = 0
+    while idx < len(ordered_roots):
+        current = ordered_roots[idx]
+        idx += 1
+        for candidate in sorted(current.rglob("*")):
+            if not candidate.is_file() or not _is_archive_file(candidate):
+                continue
+            try:
+                akey = str(candidate.resolve())
+            except OSError:
+                akey = str(candidate)
+            if akey in seen_archives:
+                continue
+            seen_archives.add(akey)
+
+            try:
+                st = candidate.stat()
+                digest_src = f"{akey}:{st.st_size}:{st.st_dev}:{st.st_ino}"
+            except OSError:
+                digest_src = akey
+            digest = hashlib.sha256(digest_src.encode("utf-8", errors="replace")).hexdigest()[:24]
+            out_dir = cache_root / f"{candidate.stem}_{digest}"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            ok = False
+            if candidate.name.lower().endswith(".zip"):
+                ok = _safe_extract_zip(candidate, out_dir)
+            elif _is_tar_file(candidate):
+                ok = _safe_extract_tar(candidate, out_dir)
+            else:
+                continue
+            if not ok:
+                continue
+            try:
+                rkey = str(out_dir.resolve())
+            except OSError:
+                rkey = str(out_dir)
+            if rkey not in seen_roots:
+                seen_roots.add(rkey)
+                ordered_roots.append(out_dir)
+
+    return ordered_roots
+
 
 def find_images(dump: Path) -> list[Path]:
     """Return an ordered, de-duplicated list of boot/recovery images to process.
@@ -935,10 +1318,11 @@ def find_images(dump: Path) -> list[Path]:
        any additional partition images extracted from factory ZIPs by option 5
        into ``boot_work/partitions/``.
 
-    3. **Fallback system search** inside *dump* (the ``--dump`` directory).
-       Compressed backups (``.win.gz``, ``.win.lz4``, ``.img.lz4``) found here
-       are decompressed into ``boot_work/`` on the fly so their resolved paths
-       are known to all subsequent pipeline steps.
+    3. **Extraction-first recursive search** inside *dump* (the ``--dump``
+       directory). Nested ZIP/TAR archives are extracted first, then
+       compressed backups (``.win.gz``, ``.win.lz4``, ``.img.lz4``) are
+       decompressed into ``boot_work/`` on the fly so their resolved paths are
+       known to all subsequent pipeline steps.
     """
     found: list[Path] = []
     _seen: set[str] = set()
@@ -984,7 +1368,7 @@ def find_images(dump: Path) -> list[Path]:
             if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
                 _add(img)
 
-    # ── Priority 3: fallback system search inside --dump ───────────────────
+    # ── Priority 3: fallback search roots inside --dump ────────────────────
     search_dirs: list[Path] = [dump / "partitions", dump / "boot_images", dump]
 
     # Also check a sibling boot_work when dump is not already boot_work.
@@ -1011,23 +1395,24 @@ def find_images(dump: Path) -> list[Path]:
         seen_dirs.add(key)
         uniq_dirs.append(d)
 
-    for search_dir in uniq_dirs:
+    # Expand nested archive trees first so image discovery can start at the
+    # extraction root and walk all nested archive content before parsing.
+    extract_cache = boot_work / "extracted_archives"
+    deep_dirs = _extract_nested_archives(uniq_dirs, extract_cache)
+
+    for search_dir in deep_dirs:
         if not search_dir.exists():
             continue
-        for name in IMAGE_NAMES:
-            c = search_dir / name
-            if c.exists():
-                _add(c)
-        # Also glob for any *.img that matches.
-        for img in sorted(search_dir.glob("*.img")):
-            if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
+        # Also recursively discover *.img candidates.
+        for img in sorted(search_dir.rglob("*.img")):
+            if img.name in IMAGE_NAMES or any(n in img.name for n in ("boot", "recovery", "ramdisk")):
                 _add(img)
         # Decompress .gz / .lz4 compressed backups found during the fallback
         # search (e.g. TWRP .win.gz, Samsung boot.img.lz4).  The decompressed
         # image is written into boot_work/ so its location is persistently known
         # alongside other option-5 output images.
         for pattern in ("*.gz", "*.lz4"):
-            for comp in sorted(search_dir.glob(pattern)):
+            for comp in sorted(search_dir.rglob(pattern)):
                 if any(n in comp.name
                        for n in ("boot", "recovery", "ramdisk", ".win")):
                     dec = _decompress_image(comp, boot_work)
@@ -1093,6 +1478,16 @@ def main() -> None:
     db.close()
     print(f"\nDone — {total_files} ramdisk files extracted total.")
     print("Tip: re-run build_table.py or report.py to refresh the database.")
+
+    # Register the extraction paths in env_registry so that downstream
+    # pipeline steps (parse_manifests.py, build_table.py, report.py …)
+    # know where to find the extracted ramdisk files without having to
+    # re-discover them.
+    ramdisk_dir = dump / "ramdisk"
+    if ramdisk_dir.exists():
+        _set_env_registry_val("HOM_RAMDISK_DIR",    str(ramdisk_dir))
+        _set_env_registry_val("HOM_UNPACK_DUMP_DIR", str(dump))
+        print(f"Registered HOM_RAMDISK_DIR={ramdisk_dir} in env_registry.")
 
 
 if __name__ == "__main__":
