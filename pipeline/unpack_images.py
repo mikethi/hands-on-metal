@@ -128,7 +128,7 @@ def strip_avb_footer(data: bytes) -> bytes:
 
 SPARSE_MAGIC = 0xED26FF3A
 
-_SPARSE_FILE_HDR   = struct.Struct("<IHHHHIIIi")   # 28 bytes
+_SPARSE_FILE_HDR   = struct.Struct("<IHHHHIIII")   # 28 bytes
 _SPARSE_CHUNK_HDR  = struct.Struct("<HHII")         # 12 bytes
 _CHUNK_RAW         = 0xCAC1
 _CHUNK_FILL        = 0xCAC2
