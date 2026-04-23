@@ -22,6 +22,8 @@
 # (bare-metal confirmed) and can be skipped.
 # ============================================================
 
+# shellcheck disable=SC2034  # constants are intentionally consumed by scripts that source this file
+
 # ── Android properties (from board_summary.txt) ───────────────
 HOM_BM_BOARD_PLATFORM="zuma"
 HOM_BM_HARDWARE="husky"
