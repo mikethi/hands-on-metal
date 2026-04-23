@@ -14,6 +14,9 @@
 #   • tools/magisk64        — Magisk binary for offline patch
 #   • tools/magisk32        — 32-bit Magisk binary (older devices)
 #   • tools/magiskinit64    — Magisk init binary
+#   • tools/magiskboot64    — Magisk boot image tool
+#   • tools/magisk_init_ld64, magisk_stub.apk, magisk_boot_patch.sh, magisk_util_functions.sh
+#                           — assets required for boot_patch.sh fallback path
 #
 # Usage:
 #   bash build/build_offline_zip.sh
@@ -113,7 +116,11 @@ cp "$REPO_ROOT/schema/hardware_map.sql" "$STAGE/schema/"
 
 # Tools (busybox, Magisk binaries — best-effort)
 mkdir -p "$STAGE/tools"
-for tool in busybox-arm64 magisk64 magisk32 magiskinit64; do
+for tool in \
+    busybox-arm64 \
+    magisk64 magisk32 magiskinit64 \
+    magiskboot64 magisk_init_ld64 \
+    magisk_stub.apk magisk_boot_patch.sh magisk_util_functions.sh; do
     if [ -f "$TOOLS_DIR/$tool" ]; then
         cp "$TOOLS_DIR/$tool" "$STAGE/tools/"
         echo "  Bundled: $tool"
