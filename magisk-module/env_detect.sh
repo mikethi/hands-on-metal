@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # magisk-module/env_detect.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Hands-on-metal — Environment Detection
 # Runs early in service.sh before collect.sh.
@@ -8,18 +9,18 @@
 # flat env registry at $ENV_REGISTRY so the rest of the
 # pipeline can source it without a database dependency.
 #
-# All writes go to /sdcard/hands-on-metal/env_registry.sh —
+# All writes go to $OUT/env_registry.sh (~/hands-on-metal/env_registry.sh) —
 # a sourceable key=value file.  The pipeline ingests this into
 # the env_var SQLite table later.
 #
 # Safety guarantees (same as collect.sh):
-#   • Never writes outside /sdcard/hands-on-metal/
+#   • Never writes outside $OUT/
 #   • Never modifies any system partition
 # ============================================================
 
 set -u
 
-OUT=/sdcard/hands-on-metal
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 LOG="$OUT/env_detect.log"
 
@@ -113,7 +114,7 @@ for py_cmd in python3 python python3.13 python3.12 python3.11 python3.10 python3
     [ -z "$p" ] && continue
     rp=$(real_abs "$p")
     ver=$("$p" --version 2>&1 | awk '{print $2}')
-    key="HOM_PYTHON_$(echo "$py_cmd" | tr '.' '_' | tr 'a-z' 'A-Z')"
+    key="HOM_PYTHON_$(echo "$py_cmd" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
     reg_set_path python "$key" "$rp"
     reg_set python "${key}_VERSION" "$ver"
     PY_FOUND=$((PY_FOUND + 1))
@@ -166,9 +167,9 @@ if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
     for mod in sqlite3 gzip lzma bz2 json argparse re pathlib struct io \
                hashlib math glob tempfile unittest subprocess; do
         if "$CANONICAL" -c "import $mod" 2>/dev/null; then
-            reg_set python "HOM_PYMOD_$(echo "$mod" | tr 'a-z' 'A-Z')" "ok"
+            reg_set python "HOM_PYMOD_$(echo "$mod" | tr '[:lower:]' '[:upper:]')" "ok"
         else
-            reg_set python "HOM_PYMOD_$(echo "$mod" | tr 'a-z' 'A-Z')" "MISSING"
+            reg_set python "HOM_PYMOD_$(echo "$mod" | tr '[:lower:]' '[:upper:]')" "MISSING"
             PY_STDLIB_OK=false
             log "WARNING: Python stdlib module '$mod' cannot be imported"
         fi
@@ -195,9 +196,9 @@ if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
     for opt in lz4 zstandard; do
         if "$CANONICAL" -c "import $opt" 2>/dev/null; then
             optver=$("$CANONICAL" -c "import $opt; print(getattr($opt, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
-            reg_set python "HOM_PYOPT_$(echo "$opt" | tr 'a-z' 'A-Z')" "$optver"
+            reg_set python "HOM_PYOPT_$(echo "$opt" | tr '[:lower:]' '[:upper:]')" "$optver"
         else
-            reg_set python "HOM_PYOPT_$(echo "$opt" | tr 'a-z' 'A-Z')" "not_installed"
+            reg_set python "HOM_PYOPT_$(echo "$opt" | tr '[:lower:]' '[:upper:]')" "not_installed"
         fi
     done
 fi
@@ -210,7 +211,7 @@ for pm in pip3 pip pip3.12 pip3.11; do
     p=$(command -v "$pm" 2>/dev/null || true)
     [ -z "$p" ] && continue
     rp=$(real_abs "$p")
-    key="HOM_PIP_$(echo "$pm" | tr '.' '_' | tr 'a-z' 'A-Z')"
+    key="HOM_PIP_$(echo "$pm" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
     reg_set_path python "$key" "$rp"
 done
 
@@ -317,7 +318,7 @@ reg_set shell HOM_ENV_TYPE "$HOM_ENV_TYPE"
 # but are NOT expected in recovery or Magisk service context)
 for build_tool in zip unzip curl git tar python3 bash; do
     p=$(command -v "$build_tool" 2>/dev/null || true)
-    key="HOM_BUILD_TOOL_$(echo "$build_tool" | tr 'a-z' 'A-Z')"
+    key="HOM_BUILD_TOOL_$(echo "$build_tool" | tr '[:lower:]' '[:upper:]')"
     if [ -n "$p" ]; then
         reg_set shell "$key" "$p"
     else
@@ -339,7 +340,7 @@ fi
 log "Detecting permissions, SELinux, and execution context..."
 
 reg_set shell HOM_WHOAMI "$(id 2>/dev/null || echo unknown)"
-reg_set shell HOM_SELINUX_CONTEXT "$(cat /proc/self/attr/current 2>/dev/null | tr -d '\0' || echo unknown)"
+reg_set shell HOM_SELINUX_CONTEXT "$(tr -d '\0' < /proc/self/attr/current 2>/dev/null || echo unknown)"
 reg_set shell HOM_SELINUX_ENFORCE "$(cat /sys/fs/selinux/enforce 2>/dev/null || echo unknown)"
 
 # ── 6b. Execution node detection ─────────────────────────────
@@ -381,7 +382,7 @@ fi
 
 log "Auditing folder permissions..."
 
-for dir_path in /sdcard/hands-on-metal /data/adb /data/local/tmp; do
+for dir_path in "$OUT" /data/adb /data/local/tmp; do
     dir_key="HOM_PERM_$(echo "$dir_path" | sed 's|/|_|g' | sed 's|^_||' | tr 'a-z-' 'A-Z_')"
     if [ -d "$dir_path" ]; then
         # Check read access
@@ -416,12 +417,13 @@ for dir_path in /sdcard/hands-on-metal /data/adb /data/local/tmp; do
 done
 
 # Output directory must be writable — warn loudly if not
-_out_key="HOM_PERM_SDCARD_HANDS_ON_METAL"
-_out_writable=$(grep "^${_out_key}_WRITABLE=" "$ENV_REGISTRY" 2>/dev/null | \
-    cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//' || echo false)
-if [ "$_out_writable" != "true" ]; then
-    log "ERROR: /sdcard/hands-on-metal is NOT writable — workflow cannot proceed"
+_out_test="$OUT/.hom_perm_check_$$"
+if ! (mkdir -p "$OUT" && touch "$_out_test") 2>/dev/null; then
+    log "ERROR: $OUT is NOT writable — workflow cannot proceed"
+else
+    rm -f "$_out_test"
 fi
+unset _out_test
 
 # ── 7. Key filesystem paths ───────────────────────────────────
 
@@ -499,9 +501,9 @@ fi
 # dm-crypt / dm-verity kernel module availability
 for kmod in dm_crypt dm_verity; do
     if [ -d "/sys/module/$kmod" ]; then
-        reg_set crypto "HOM_KMOD_$(echo "$kmod" | tr 'a-z' 'A-Z')" "loaded"
+        reg_set crypto "HOM_KMOD_$(echo "$kmod" | tr '[:lower:]' '[:upper:]')" "loaded"
     else
-        reg_set crypto "HOM_KMOD_$(echo "$kmod" | tr 'a-z' 'A-Z')" "not_loaded"
+        reg_set crypto "HOM_KMOD_$(echo "$kmod" | tr '[:lower:]' '[:upper:]')" "not_loaded"
     fi
 done
 
@@ -587,6 +589,36 @@ if [ "$SDK_INT" -ge 33 ] 2>/dev/null; then
     reg_set api HOM_API_INIT_BOOT "true"
 else
     reg_set api HOM_API_INIT_BOOT "false"
+fi
+
+# ── 12. Summary variables ─────────────────────────────────────
+# Canonical aliases consumed by detect.sh, menu_lib.sh, and collect.sh.
+# Maps the detailed env_detect vars to the simpler names that the rest
+# of the workflow expects so every consumer sees consistent keys.
+
+log "Writing summary variables..."
+
+# HOM_ENV_SHELL — shell environment type string (termux / linux_host / etc.)
+reg_set shell HOM_ENV_SHELL "$HOM_ENV_TYPE"
+
+# HOM_ENV_BUSYBOX — path to busybox binary, or empty if not found
+reg_set shell HOM_ENV_BUSYBOX "$BB"
+
+# HOM_ENV_PYTHON — canonical Python binary path, or empty if none found
+reg_set shell HOM_ENV_PYTHON "$CANONICAL"
+
+# HOM_ENV_TERMUX — "true" when Termux is installed, "false" otherwise
+if [ -n "$TERMUX_PREFIX" ]; then
+    reg_set shell HOM_ENV_TERMUX "true"
+else
+    reg_set shell HOM_ENV_TERMUX "false"
+fi
+
+# HOM_ENV_ROOT — "true" when running as uid 0, "false" otherwise
+if [ "$EXEC_UID" = "0" ]; then
+    reg_set shell HOM_ENV_ROOT "true"
+else
+    reg_set shell HOM_ENV_ROOT "false"
 fi
 
 # ── done ─────────────────────────────────────────────────────

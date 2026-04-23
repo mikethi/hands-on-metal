@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/flash.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Flash execution — writes the patched image to the device.
 #
@@ -32,9 +33,10 @@
 #   HOM_DEV_SLOT_SUFFIX     — _a | _b | empty
 # ============================================================
 
+# shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="flash"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 
 # ── helpers ───────────────────────────────────────────────────
@@ -192,6 +194,7 @@ run_flash_magisk_path() {
     fi
 
     _reg_set flash HOM_FLASH_STATUS "OK"
+    _reg_set flash HOM_FLASH_VERIFIED "1"
     ux_step_result "Flash Patched Boot" "OK" "verified SHA-256 match"
     manifest_step "flash_boot" "OK" "dev=$flash_dev sha256=$post_sha"
 
@@ -266,6 +269,7 @@ run_flash_recovery_path() {
     fi
 
     _reg_set flash HOM_FLASH_STATUS "OK"
+    _reg_set flash HOM_FLASH_VERIFIED "1"
     ux_step_result "Flash Patched Boot" "OK" "SHA-256 verified"
     manifest_step "flash_boot_recovery" "OK" "dev=$flash_dev"
 

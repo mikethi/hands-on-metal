@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # magisk-module/customize.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Magisk module customization hook.
 # Sourced by the update-binary installer after module files are
@@ -23,7 +24,7 @@ set -u
 
 MODPATH="${MODPATH:-/data/adb/modules/hands-on-metal-collector}"
 CORE="$MODPATH/core"
-OUT="/sdcard/hands-on-metal"
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 STATE_FILE="$MODPATH/.install_state"
 LOG_DIR="$OUT/logs"
@@ -36,14 +37,36 @@ export OUT ENV_REGISTRY STATE_FILE LOG_DIR ZIPFILE
 SCRIPT_NAME="customize"
 export SCRIPT_NAME
 
+_require_sourceable() {
+    local script="$1"
+    if [ ! -f "$script" ]; then
+        echo "FATAL: missing required script: $script" >&2
+        exit 1
+    fi
+    if [ ! -r "$script" ]; then
+        echo "FATAL: required script is not readable: $script" >&2
+        echo "Fix module file permissions/contexts, then retry." >&2
+        exit 1
+    fi
+}
+
+for _req in \
+    "$CORE/logging.sh" \
+    "$CORE/ux.sh" \
+    "$CORE/state_machine.sh" \
+    "$CORE/privacy.sh" \
+    "$MODPATH/env_detect.sh"; do
+    _require_sourceable "$_req"
+done
+
 # shellcheck source=/dev/null
-. "$CORE/logging.sh"
+. "$CORE/logging.sh" || { echo "FATAL: failed to source $CORE/logging.sh" >&2; exit 1; }
 # shellcheck source=/dev/null
-. "$CORE/ux.sh"
+. "$CORE/ux.sh" || { echo "FATAL: failed to source $CORE/ux.sh" >&2; exit 1; }
 # shellcheck source=/dev/null
-. "$CORE/state_machine.sh"
+. "$CORE/state_machine.sh" || { echo "FATAL: failed to source $CORE/state_machine.sh" >&2; exit 1; }
 # shellcheck source=/dev/null
-. "$CORE/privacy.sh"
+. "$CORE/privacy.sh" || { echo "FATAL: failed to source $CORE/privacy.sh" >&2; exit 1; }
 
 mkdir -p "$OUT" "$LOG_DIR"
 log_banner "hands-on-metal root workflow (Magisk path)"
@@ -53,11 +76,11 @@ sm_print_status
 
 _source_core() {
     local script="$CORE/$1"
-    if [ -f "$script" ]; then
+    if [ -f "$script" ] && [ -r "$script" ]; then
         # shellcheck source=/dev/null
         . "$script"
     else
-        ux_abort "Missing core script: $script"
+        ux_abort "Missing or unreadable core script: $script"
     fi
 }
 
@@ -68,6 +91,7 @@ if ! sm_require "ENV_DETECTED" 2>/dev/null; then
         "Probes shell, Python, Termux, available tools, SELinux context, and key paths" \
         "Ensures all prerequisites are present before running collection or patching scripts"
 
+    # shellcheck disable=SC1091  # source path is dynamic at install time
     SCRIPT_NAME="env_detect" . "$MODPATH/env_detect.sh" || \
         ux_abort "Environment detection failed — check $LOG_DIR for details"
 
@@ -108,6 +132,7 @@ ux_progress 25
 
 if ! sm_require "BOOT_IMG_ACQUIRED" 2>/dev/null; then
     _source_core "boot_image.sh"
+    # shellcheck disable=SC2034  # consumed by sourced core/boot_image.sh
     PARTITION_INDEX="$MODPATH/build/partition_index.json"
     SCRIPT_NAME="boot_image"
     run_boot_image_acquire
@@ -175,7 +200,7 @@ ux_print "  The device will reboot momentarily."
 ux_print ""
 ux_print "  After reboot:"
 ux_print "    1. Open Magisk app → confirm root"
-ux_print "    2. Hardware collection logs: /sdcard/hands-on-metal/"
+ux_print "    2. Hardware collection logs: ~/hands-on-metal/"
 ux_print "    3. Full install log: $LOG_DIR/"
 ux_print ""
 
