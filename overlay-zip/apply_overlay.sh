@@ -242,9 +242,11 @@ _mark_scanned \
 
 # ── Step 4: copy overlay files to $OVERLAY_OUT ────────────────
 log "Copying overlay payload files to $OVERLAY_OUT ..."
-cp -r "$OVERLAY_SRC"/. "$OVERLAY_OUT/" 2>/dev/null && \
-    log "  Copied overlay payload" || \
+if cp -r "$OVERLAY_SRC"/. "$OVERLAY_OUT/" 2>/dev/null; then
+    log "  Copied overlay payload"
+else
     log "  WARNING: could not copy overlay payload"
+fi
 
 # ── Done ──────────────────────────────────────────────────────
 SKIPPED=$(grep -c "skipped:bare_metal" "$LOG" 2>/dev/null || echo 0)
